@@ -1,0 +1,25 @@
+# Swift build caches and local package state
+/.build/
+/.build-*/
+/.swiftpm/
+
+# Locally built apps, diagnostics, logs, and previous installations
+/dist/
+/diagnostics/
+*.log
+
+# macOS and editor state
+.DS_Store
+xcuserdata/
+*.xcuserstate
+.idea/
+.vscode/
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.p12
+*.pfx
+*.pem
+*.key

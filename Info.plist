@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleDisplayName</key>
+    <string>ThunderLink</string>
+    <key>CFBundleExecutable</key>
+    <string>ThunderLink</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.sunny.thunderlink</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>ThunderLink</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.3.3</string>
+    <key>CFBundleVersion</key>
+    <string>8</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>NSHumanReadableCopyright</key>
+    <string>Built for local Thunderbolt input sharing.</string>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>ThunderLink 使用雷电桥发现另一台 Mac 并传输键盘和鼠标事件。</string>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_thunderlink._tcp</string>
+    </array>
+</dict>
+</plist>
