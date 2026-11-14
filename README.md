@@ -29,9 +29,8 @@ Keyboard and mouse sharing between two Macs over Thunderbolt Bridge.
 
 - macOS 13 或更高版本。
 - 两台 Mac 通过雷电线连接，并且系统网络设置中存在活动的 `Thunderbolt Bridge`。
-- 主控端需要“隐私与安全性 → 辅助功能”和“输入监控”权限。
-- 被控端需要“隐私与安全性 → 辅助功能”权限。
-- App 当前使用临时签名。重新构建后，macOS 会把它识别成新的授权对象，可能需要重新授权。
+- 两端均需要在“隐私与安全性”的“辅助功能”中允许 ThunderLink。
+- 当前构建使用固定的本地代码签名证书。首次迁移时需要批准新身份，后续更新需沿用同一证书和应用标识。
 - 固定安装位置是 `/Applications/ThunderLink.app`。
 
 ## 构建
@@ -45,6 +44,8 @@ swift test -j 2
 zsh scripts/build-app.sh release
 ```
 
+构建机必须有对应证书与私钥，并将该证书的 40 位 SHA-1 指纹保存到 `~/Library/Application Support/ThunderLink/Signing/identity.sha1`。接收安装包的 Mac 不需要私钥。
+
 构建产物：
 
 - `dist/ThunderLink.app`
@@ -54,9 +55,9 @@ zsh scripts/build-app.sh release
 
 ## 两台 Mac 的使用顺序
 
-1. 把 `ThunderLink.zip` 复制到两台 Mac，解压后把 `ThunderLink.app` 放入 `/Applications`。这个版本使用临时签名；如果 macOS 阻止首次启动，请按住 Control 点击 App，选择“打开”。
+1. 把 `ThunderLink.zip` 复制到两台 Mac，解压后把 `ThunderLink.app` 放入 `/Applications`。这个版本使用本地签名。
 2. 在被控端选择“允许这台 Mac 被控制”，授予辅助功能权限，重新打开 App，然后点击“开始接收”。
-3. 在主控端选择“控制另一台 Mac”，授予辅助功能和输入监控权限，重新打开 App。
+3. 在主控端选择“控制另一台 Mac”，在 macOS 首次提示时授予辅助功能权限。
 4. 选择自动发现的对端，输入被控端显示的 6 位配对码，选择对端位于左边还是右边，然后点击“连接”。
 5. 松开所有按键和鼠标按钮，把主控端指针移出所选屏幕边缘。指针进入被控端；移回相反边缘，或按 `Control + Option + Escape`，输入回到主控端。
 

@@ -42,7 +42,6 @@ final class InputController {
         stopMonitoring(force: true)
         localInputState.reconcilePhysicalState(with: physicalInputSnapshot())
         guard SystemPermissions.accessibilityGranted else { throw InputError.accessibilityRequired }
-        guard SystemPermissions.inputMonitoringGranted else { throw InputError.inputMonitoringRequired }
 
         let types: [CGEventType] = [
             .keyDown, .keyUp, .flagsChanged,
@@ -445,13 +444,11 @@ final class InputController {
 
     enum InputError: LocalizedError {
         case accessibilityRequired
-        case inputMonitoringRequired
         case eventTapCreationFailed
 
         var errorDescription: String? {
             switch self {
             case .accessibilityRequired: return "请先授予辅助功能权限"
-            case .inputMonitoringRequired: return "请先授予输入监控权限"
             case .eventTapCreationFailed: return "无法创建全局输入监听，请检查权限后重启 App"
             }
         }

@@ -130,17 +130,16 @@ struct ContentView: View {
             Text("系统权限").font(.headline)
             HStack {
                 permissionLabel("辅助功能", granted: model.accessibilityGranted)
-                permissionLabel("输入监控", granted: model.inputMonitoringGranted)
                 Spacer()
-                Button("完成首次授权") { model.requestPermissions() }
-                Menu("打开设置") {
-                    Button("辅助功能") { model.openAccessibilitySettings() }
-                    Button("输入监控") { model.openInputMonitoringSettings() }
+                if !model.accessibilityGranted {
+                    Button("打开辅助功能设置") { model.requestPermissions() }
                 }
             }
-            Text("主控端需要两项权限；被控端只需要辅助功能权限。首次授权或更新 App 后，可能需要退出并重新打开；若仍未生效，请在系统设置中移除旧授权，再添加当前 App。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            if !model.accessibilityGranted {
+                Text("在「隐私与安全性」的「辅助功能」列表中允许 ThunderLink，即可使用跨机键鼠。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

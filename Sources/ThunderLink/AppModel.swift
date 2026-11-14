@@ -40,7 +40,6 @@ final class AppModel: ObservableObject {
     @Published var controlling = false
     @Published var remoteControllerName: String?
     @Published var accessibilityGranted = false
-    @Published var inputMonitoringGranted = false
     @Published var launchAtLogin = false
     @Published var loginItemStatus = "未设置开机启动"
     @Published private(set) var receiverAutoStartEnabled = false
@@ -69,6 +68,7 @@ final class AppModel: ObservableObject {
     private var targetPeerName: String?
     private var nextReconnectAt = Date.distantPast
     private var nextReceiverRetryAt = Date.distantPast
+    private var lastLoggedAccessibilityState: Bool?
     private var initialized = false
 
     init() {
@@ -86,10 +86,14 @@ final class AppModel: ObservableObject {
         targetPeerName = defaults.string(forKey: DefaultsKey.targetPeerName)
         bindServices()
         refreshSystemState()
-        ThunderLinkLog.input.notice("Startup permissions: accessibility=\(self.accessibilityGranted, privacy: .public), inputMonitoring=\(self.inputMonitoringGranted, privacy: .public)")
         refreshLoginItemStatus()
         initialized = true
         resumeSavedRole()
+        if CommandLine.arguments.contains("--request-accessibility") {
+            DispatchQueue.main.async { [weak self] in
+                self?.requestPermissions()
+            }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshSystemState()
@@ -166,10 +170,9 @@ final class AppModel: ObservableObject {
             return
         }
         SystemPermissions.requestAccessibility()
-        SystemPermissions.requestInputMonitoring()
         refreshSystemState()
-        guard accessibilityGranted, inputMonitoringGranted else {
-            connectionStatus = "控制端需要辅助功能和输入监控权限"
+        guard accessibilityGranted else {
+            connectionStatus = "控制端需要辅助功能权限"
             return
         }
         wantsControllerConnection = true
@@ -196,12 +199,9 @@ final class AppModel: ObservableObject {
 
     func requestPermissions() {
         SystemPermissions.requestAccessibility()
-        if role == .controller { SystemPermissions.requestInputMonitoring() }
         refreshSystemState()
         if !accessibilityGranted {
             SystemPermissions.openAccessibilitySettings()
-        } else if role == .controller, !inputMonitoringGranted {
-            SystemPermissions.openInputMonitoringSettings()
         } else {
             resumeSavedRole()
             tryAutomaticReconnect()
@@ -217,9 +217,6 @@ final class AppModel: ObservableObject {
             startReceiver()
         }
     }
-
-    func openAccessibilitySettings() { SystemPermissions.openAccessibilitySettings() }
-    func openInputMonitoringSettings() { SystemPermissions.openInputMonitoringSettings() }
 
     func setLaunchAtLogin(_ enabled: Bool) {
         let service = SMAppService.mainApp
@@ -261,10 +258,14 @@ final class AppModel: ObservableObject {
 
     private func refreshSystemState() {
         networkState = NetworkInterfaceDetector.thunderboltBridge()
-        accessibilityGranted = SystemPermissions.accessibilityGranted
-        inputMonitoringGranted = SystemPermissions.inputMonitoringGranted
+        let currentAccessibilityState = SystemPermissions.accessibilityGranted
+        accessibilityGranted = currentAccessibilityState
+        if lastLoggedAccessibilityState != currentAccessibilityState {
+            ThunderLinkLog.input.notice("Accessibility permission changed: granted=\(currentAccessibilityState, privacy: .public)")
+            lastLoggedAccessibilityState = currentAccessibilityState
+        }
         if role == .controller, (controllerConnected || controllerConnecting),
-           (!accessibilityGranted || !inputMonitoringGranted || !networkState.isActive) {
+           (!accessibilityGranted || !networkState.isActive) {
             inputController.stopMonitoring()
             controller.disconnect()
         }
@@ -436,7 +437,6 @@ final class AppModel: ObservableObject {
               !controllerConnected,
               !controllerConnecting,
               accessibilityGranted,
-              inputMonitoringGranted,
               Date() >= nextReconnectAt,
               let targetPeerName,
               let peer = peers.first(where: { $0.name == targetPeerName }) else { return }
