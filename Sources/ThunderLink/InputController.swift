@@ -71,6 +71,19 @@ final class InputController {
         runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        // macOS may create an active HID tap after removing keyDown and keyUp
+        // from its mask. Check what the system installed before enabling transfers.
+        guard let taps = Self.installedTaps() else {
+            finishStoppingMonitoring()
+            throw InputError.eventTapCreationFailed
+        }
+        guard taps.contains(where: {
+            $0.tappingProcess == getpid() && $0.tapPoint == .cghidEventTap &&
+            $0.options == .defaultTap && $0.enabled && Self.capturesKeyboard($0.eventsOfInterest)
+        }) else {
+            finishStoppingMonitoring()
+            throw InputError.keyboardEventsUnavailable
+        }
         isReady = true
         var token: Int32 = 0
         if notify_register_dispatch(kCGNotifyEventTapAdded, &token, .main, { [weak self] _ in
@@ -141,16 +154,28 @@ final class InputController {
         }
     }
 
-    // The system notification includes our own new tap. Compare foreign IDs
-    // rather than depending on an undocumented order in CGGetEventTapList.
-    private static func foreignModifierTapIDs() -> Set<UInt32>? {
+    static func capturesKeyboard(_ mask: CGEventMask) -> Bool {
+        let required = [CGEventType.keyDown, .keyUp, .flagsChanged].reduce(CGEventMask(0)) {
+            $0 | (1 << $1.rawValue)
+        }
+        return mask & required == required
+    }
+
+    private static func installedTaps() -> ArraySlice<CGEventTapInformation>? {
         var count: UInt32 = 0
         guard CGGetEventTapList(0, nil, &count) == .success else { return nil }
         var taps = [CGEventTapInformation](repeating: CGEventTapInformation(), count: Int(count) + 16)
         let capacity = UInt32(taps.count)
         guard CGGetEventTapList(capacity, &taps, &count) == .success, count <= capacity else { return nil }
+        return taps.prefix(Int(count))
+    }
+
+    // The system notification includes our own new tap. Compare foreign IDs
+    // rather than depending on an undocumented order in CGGetEventTapList.
+    private static func foreignModifierTapIDs() -> Set<UInt32>? {
+        guard let taps = installedTaps() else { return nil }
         let mask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
-        return Set(taps.prefix(Int(count)).filter {
+        return Set(taps.filter {
             $0.tappingProcess != getpid() && $0.tapPoint == .cghidEventTap &&
             $0.eventsOfInterest & mask != 0
         }.map(\.eventTapID))
@@ -444,11 +469,13 @@ final class InputController {
 
     enum InputError: LocalizedError {
         case accessibilityRequired
+        case keyboardEventsUnavailable
         case eventTapCreationFailed
 
         var errorDescription: String? {
             switch self {
             case .accessibilityRequired: return "请先授予辅助功能权限"
+            case .keyboardEventsUnavailable: return "普通按键监听未生效。请在本机允许 ThunderLink 输入监控，再重新连接。"
             case .eventTapCreationFailed: return "无法创建全局输入监听，请检查权限后重启 App"
             }
         }

@@ -40,6 +40,8 @@ final class AppModel: ObservableObject {
     @Published var controlling = false
     @Published var remoteControllerName: String?
     @Published var accessibilityGranted = false
+    @Published var inputMonitoringGranted = false
+    @Published private(set) var keyboardInputReady = true
     @Published var launchAtLogin = false
     @Published var loginItemStatus = "未设置开机启动"
     @Published private(set) var receiverAutoStartEnabled = false
@@ -69,6 +71,8 @@ final class AppModel: ObservableObject {
     private var nextReconnectAt = Date.distantPast
     private var nextReceiverRetryAt = Date.distantPast
     private var lastLoggedAccessibilityState: Bool?
+    private var lastLoggedInputMonitoringState: Bool?
+    private var controllerPermissionBlocked = false
     private var initialized = false
 
     init() {
@@ -89,7 +93,8 @@ final class AppModel: ObservableObject {
         refreshLoginItemStatus()
         initialized = true
         resumeSavedRole()
-        if CommandLine.arguments.contains("--request-accessibility") {
+        if CommandLine.arguments.contains("--request-permissions") ||
+            CommandLine.arguments.contains("--request-accessibility") {
             DispatchQueue.main.async { [weak self] in
                 self?.requestPermissions()
             }
@@ -169,12 +174,22 @@ final class AppModel: ObservableObject {
             connectionStatus = "请输入被控端显示的 6 位配对码"
             return
         }
-        SystemPermissions.requestAccessibility()
+        refreshSystemState()
+        if !accessibilityGranted { SystemPermissions.requestAccessibility() }
         refreshSystemState()
         guard accessibilityGranted else {
-            connectionStatus = "控制端需要辅助功能权限"
+            connectionStatus = "控制端需要辅助功能和输入监控权限"
             return
         }
+        SystemPermissions.requestInputMonitoring()
+        refreshSystemState()
+        guard inputMonitoringGranted else {
+            connectionStatus = "控制端需要辅助功能和输入监控权限"
+            SystemPermissions.openInputMonitoringSettings()
+            return
+        }
+        controllerPermissionBlocked = false
+        keyboardInputReady = true
         wantsControllerConnection = true
         controllerAutoConnectEnabled = true
         targetPeerName = peer.name
@@ -198,11 +213,22 @@ final class AppModel: ObservableObject {
     }
 
     func requestPermissions() {
-        SystemPermissions.requestAccessibility()
         refreshSystemState()
         if !accessibilityGranted {
+            SystemPermissions.requestAccessibility()
             SystemPermissions.openAccessibilitySettings()
+        } else if role == .controller, !inputMonitoringGranted {
+            SystemPermissions.requestInputMonitoring()
+            refreshSystemState()
+            if !inputMonitoringGranted {
+                SystemPermissions.openInputMonitoringSettings()
+            }
         } else {
+            if role == .controller && controllerPermissionBlocked {
+                SystemPermissions.openInputMonitoringSettings()
+            }
+            controllerPermissionBlocked = false
+            keyboardInputReady = true
             resumeSavedRole()
             tryAutomaticReconnect()
         }
@@ -246,6 +272,7 @@ final class AppModel: ObservableObject {
             receiverStarting = false
             if !controllerConnected && !controllerConnecting { browser.start() }
             wantsControllerConnection = controllerAutoConnectEnabled
+            controllerPermissionBlocked = false
             tryAutomaticReconnect()
         } else {
             disconnectController()
@@ -259,13 +286,21 @@ final class AppModel: ObservableObject {
     private func refreshSystemState() {
         networkState = NetworkInterfaceDetector.thunderboltBridge()
         let currentAccessibilityState = SystemPermissions.accessibilityGranted
+        let currentInputMonitoringState = SystemPermissions.inputMonitoringGranted
         accessibilityGranted = currentAccessibilityState
+        inputMonitoringGranted = currentInputMonitoringState
         if lastLoggedAccessibilityState != currentAccessibilityState {
             ThunderLinkLog.input.notice("Accessibility permission changed: granted=\(currentAccessibilityState, privacy: .public)")
             lastLoggedAccessibilityState = currentAccessibilityState
         }
+        if lastLoggedInputMonitoringState != currentInputMonitoringState {
+            ThunderLinkLog.input.notice("Input monitoring permission changed: granted=\(currentInputMonitoringState, privacy: .public)")
+            lastLoggedInputMonitoringState = currentInputMonitoringState
+            if currentInputMonitoringState { controllerPermissionBlocked = false }
+            if currentInputMonitoringState { keyboardInputReady = true }
+        }
         if role == .controller, (controllerConnected || controllerConnecting),
-           (!accessibilityGranted || !networkState.isActive) {
+           (!accessibilityGranted || !inputMonitoringGranted || !networkState.isActive) {
             inputController.stopMonitoring()
             controller.disconnect()
         }
@@ -389,6 +424,11 @@ final class AppModel: ObservableObject {
                     self.browser.stop()
                 } catch {
                     self.connectionStatus = error.localizedDescription
+                    if let inputError = error as? InputController.InputError,
+                       case .keyboardEventsUnavailable = inputError {
+                        self.controllerPermissionBlocked = true
+                        self.keyboardInputReady = false
+                    }
                     self.controller.disconnect()
                 }
             }
@@ -437,6 +477,8 @@ final class AppModel: ObservableObject {
               !controllerConnected,
               !controllerConnecting,
               accessibilityGranted,
+              inputMonitoringGranted,
+              !controllerPermissionBlocked,
               Date() >= nextReconnectAt,
               let targetPeerName,
               let peer = peers.first(where: { $0.name == targetPeerName }) else { return }

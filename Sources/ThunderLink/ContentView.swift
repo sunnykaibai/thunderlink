@@ -130,13 +130,25 @@ struct ContentView: View {
             Text("系统权限").font(.headline)
             HStack {
                 permissionLabel("辅助功能", granted: model.accessibilityGranted)
+                if model.role == .controller {
+                    permissionLabel(
+                        "输入监控",
+                        granted: model.inputMonitoringGranted && model.keyboardInputReady
+                    )
+                }
                 Spacer()
-                if !model.accessibilityGranted {
-                    Button("打开辅助功能设置") { model.requestPermissions() }
+                if !model.accessibilityGranted ||
+                    (model.role == .controller &&
+                     (!model.inputMonitoringGranted || !model.keyboardInputReady)) {
+                    Button("完成所需授权") { model.requestPermissions() }
                 }
             }
-            if !model.accessibilityGranted {
-                Text("在「隐私与安全性」的「辅助功能」列表中允许 ThunderLink，即可使用跨机键鼠。")
+            if !model.accessibilityGranted ||
+                (model.role == .controller &&
+                 (!model.inputMonitoringGranted || !model.keyboardInputReady)) {
+                Text(model.role == .controller
+                     ? "控制端需要辅助功能和输入监控；接收端只需要辅助功能。"
+                     : "在「隐私与安全性」的「辅助功能」列表中允许 ThunderLink。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
