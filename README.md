@@ -1,6 +1,6 @@
 # ThunderLink
 
-ThunderLink 0.3.3 是一个只通过 macOS `Thunderbolt Bridge` 共享键盘和鼠标的 App。同一个 App 安装在两台 Mac 上，一台选择“控制另一台 Mac”，另一台选择“允许这台 Mac 被控制”。
+ThunderLink 0.3.7 是一个只通过 macOS `Thunderbolt Bridge` 共享键盘和鼠标的 App。同一个 App 安装在两台 Mac 上，一台选择“控制另一台 Mac”，另一台选择“允许这台 Mac 被控制”。
 
 Keyboard and mouse sharing between two Macs over Thunderbolt Bridge.
 
@@ -13,6 +13,8 @@ Keyboard and mouse sharing between two Macs over Thunderbolt Bridge.
 - 6 位配对码。
 - 松开键盘和鼠标按钮后，指针从主控端桌面的左边或右边移出，切换到被控端。本机相邻显示器的共享边缘不会触发切换。
 - 键盘按下/松开、修饰键、鼠标移动、点击、双击、远端拖动和滚轮转发。按住鼠标拖动时不会跨到另一台 Mac。
+- 鼠标在对端时，完成系统的三指或四指滑动会在对端执行桌面快捷键。左右切换空间，上滑打开调度中心，下滑显示当前应用的窗口。对端需要启用默认的 Control 加方向键快捷键，左右切换还需要有相邻空间。动作在松手时执行。该实现使用 macOS 会话事件流中未公开的 Dock 手势字段。
+- 两端同为 0.3.7 时，双指滚动会附带滚动和惯性的阶段。捏合与旋转由支持它们的目标应用处理。连接旧接收端时仍可使用上述桌面快捷键和普通滚动。
 - `Control + Option + Escape` 可在远端控制期间立即恢复本机。
 - 断线时清理被控端记录的普通键、修饰键和鼠标按钮；本机对尚未松开的远端输入继续抑制重复和松开事件，直到物理释放。
 - TCP keepalive 和应用层心跳检测失效连接，检测到断线后恢复主控端输入。心跳每 2 秒检查一次，距离最后响应超过 8 秒时断开，不能保证拔线瞬间被发现。
@@ -68,7 +70,7 @@ zsh scripts/build-app.sh release
 可单独运行无网络、无输入注入的内存检查：
 
 ```bash
-swiftc -O Sources/ThunderLink/WireMessage.swift Sources/ThunderLink/OutboundMessageQueue.swift Tools/MemoryProbe.swift -o /tmp/thunderlink-memory-probe
+swiftc -O Sources/ThunderLink/AppTrackpadGesture.swift Sources/ThunderLink/WireMessage.swift Sources/ThunderLink/OutboundMessageQueue.swift Tools/MemoryProbe.swift -o /tmp/thunderlink-memory-probe
 /tmp/thunderlink-memory-probe
 ```
 
@@ -76,7 +78,7 @@ swiftc -O Sources/ThunderLink/WireMessage.swift Sources/ThunderLink/OutboundMess
 
 ## 使用边界
 
-ThunderLink 不调用 Apple Universal Control 的私有协议，不传输剪贴板、文件拖放、触控板多指手势、Touch ID 或所有厂商的媒体键扩展。被控端光标目前仍限制在主显示器。两台真实 Mac 上的休眠、锁屏、多显示器和高频游戏鼠标行为尚未完整验证。
+ThunderLink 不调用 Apple Universal Control 的私有协议，不传输剪贴板、文件拖放、任意原始触点、Touch ID 或所有厂商的媒体键扩展。被控端光标目前仍限制在主显示器。两台真实 Mac 上的休眠、锁屏、多显示器和高频游戏鼠标行为尚未完整验证。
 
 传输内容是经过配对码验证的本地 TCP 消息，但尚未加密。监听端拒绝不经过 `bridge0` 的连接，适用于两台直接用雷电线连接的 Mac，不应部署到不受信任的共享网络。
 

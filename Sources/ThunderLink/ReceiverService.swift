@@ -174,7 +174,7 @@ final class ReceiverService {
                 type: .helloAck,
                 protocolVersion: 2,
                 edge: edge,
-                capabilities: ["heartbeat-v1"]
+                capabilities: ["heartbeat-v1", "app-gesture-v1"]
             ))
             onStatus?("已与 \(name) 通过 bridge0 配对")
             return

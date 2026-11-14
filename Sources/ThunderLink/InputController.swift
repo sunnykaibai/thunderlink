@@ -7,6 +7,11 @@ final class InputController {
     var onActiveChanged: ((Bool) -> Void)?
     var onError: ((String) -> Void)?
 
+    var supportsAppGestures = false
+    private var gestureTap: CFMachPort?
+    private var gestureSource: CFRunLoopSource?
+    private var dockSwipe = DockSwipe()
+
     var transferEdge: TransferEdge = .right
     private(set) var isReady = false
     private(set) var isControlling = false
@@ -84,6 +89,11 @@ final class InputController {
             finishStoppingMonitoring()
             throw InputError.keyboardEventsUnavailable
         }
+        if !installGestureTap() {
+            // A gesture registration failure must not break an existing keyboard/mouse pair.
+            ThunderLinkLog.input.error("Could not install trackpad session tap")
+            onError?("触控板手势监听未能启动，键盘和鼠标仍可使用")
+        }
         isReady = true
         var token: Int32 = 0
         if notify_register_dispatch(kCGNotifyEventTapAdded, &token, .main, { [weak self] _ in
@@ -91,6 +101,62 @@ final class InputController {
         }) == NOTIFY_STATUS_OK {
             tapNotificationToken = token
         }
+    }
+
+    // WindowServer emits recognized gestures in the session stream. Keep the
+    // existing HID tap for keys, mouse and scroll; these masks do not overlap.
+    private func installGestureTap() -> Bool {
+        let mask = (CGEventMask(1) << 29) | (CGEventMask(1) << 30)
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: mask,
+            callback: { _, type, event, context in
+                guard let context else { return Unmanaged.passUnretained(event) }
+                let controller = Unmanaged<InputController>.fromOpaque(context).takeUnretainedValue()
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    controller.dockSwipe.release()
+                    if let tap = controller.gestureTap { CGEvent.tapEnable(tap: tap, enable: true) }
+                    return Unmanaged.passUnretained(event)
+                }
+                return controller.handleGesture(event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else { return false }
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            return false
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        gestureTap = tap
+        gestureSource = source
+        CGEvent.tapEnable(tap: tap, enable: true)
+        return true
+    }
+
+    private func handleGesture(_ event: CGEvent) -> Unmanaged<CGEvent>? {
+        let result = dockSwipe.handle(event, remote: isControlling)
+        if result.consume {
+            if let key = result.arrow, isControlling, !localInputState.hasPressedInput {
+                sendDesktopShortcut(key)
+            }
+            return nil
+        }
+        if isControlling, supportsAppGestures, let gesture = AppTrackpadGesture(capturing: event) {
+            onSend?(WireMessage(type: .appGesture, appGesture: gesture))
+            return nil
+        }
+        return Unmanaged.passUnretained(event)
+    }
+
+    private func sendDesktopShortcut(_ arrow: CGKeyCode) {
+        let control = CGEventFlags.maskControl.rawValue | 0x01
+        onSend?(WireMessage(type: .key, keyCode: 59, eventKind: "flags", flags: control))
+        onSend?(WireMessage(type: .key, keyCode: arrow, eventKind: "down", flags: control))
+        onSend?(WireMessage(type: .key, keyCode: arrow, eventKind: "up", flags: control))
+        onSend?(WireMessage(type: .key, keyCode: 59, eventKind: "flags", flags: 0))
+        ThunderLinkLog.input.info("Forwarded desktop gesture shortcut")
     }
 
     // Input methods may install their own head filter after we connect. Take
@@ -195,6 +261,11 @@ final class InputController {
     }
 
     private func finishStoppingMonitoring() {
+        if let gestureSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), gestureSource, .commonModes) }
+        if let gestureTap { CFMachPortInvalidate(gestureTap) }
+        gestureSource = nil
+        gestureTap = nil
+        dockSwipe = DockSwipe()
         if let token = tapNotificationToken { notify_cancel(token) }
         tapNotificationToken = nil
         removeRightOptionTap()
@@ -210,6 +281,7 @@ final class InputController {
     func releaseFromRemote() {
         cursorLock.release()
         guard isControlling else { return }
+        dockSwipe.release()
         // Key-down events were consumed while remote control was active. Keep
         // consuming repeats and the matching physical up events after returning,
         // otherwise the local app can receive input without a corresponding down.
@@ -355,11 +427,7 @@ final class InputController {
                 clickCount: Int(event.getIntegerValueField(.mouseEventClickState))
             ))
         case .scrollWheel:
-            onSend?(WireMessage(
-                type: .scroll,
-                scrollX: Double(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis2)),
-                scrollY: Double(event.getIntegerValueField(.scrollWheelEventPointDeltaAxis1))
-            ))
+            onSend?(ScrollGesture.message(from: event))
         case .keyDown, .keyUp, .flagsChanged:
             onSend?(WireMessage(
                 type: .key,

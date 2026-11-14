@@ -433,6 +433,11 @@ final class AppModel: ObservableObject {
                 }
             }
         }
+        controller.onAppGestureCapabilityChanged = { [weak self] supported in
+            DispatchQueue.main.async {
+                self?.inputController.supportsAppGestures = supported
+            }
+        }
         controller.onRelease = { [weak self] in
             DispatchQueue.main.async { self?.inputController.releaseFromRemote() }
         }
@@ -445,6 +450,7 @@ final class AppModel: ObservableObject {
         }
         controller.onDisconnected = { [weak self] in
             DispatchQueue.main.async {
+                self?.inputController.supportsAppGestures = false
                 self?.inputController.stopMonitoring()
                 self?.controllerConnected = false
                 self?.controllerConnecting = false

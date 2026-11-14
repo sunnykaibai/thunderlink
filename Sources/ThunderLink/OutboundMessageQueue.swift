@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// Bounded FIFO that combines adjacent high-frequency pointer events while
@@ -25,9 +26,9 @@ struct OutboundMessageQueue {
         if coalesceWithLast(message) { return .coalesced }
 
         if messages.count >= capacity {
-            if let disposable = messages.firstIndex(where: { $0.type == .mouseMove || $0.type == .scroll }) {
+            if let disposable = messages.firstIndex(where: { $0.isDisposablePointerEvent }) {
                 messages.remove(at: disposable)
-            } else if message.type == .mouseMove || message.type == .scroll {
+            } else if message.isDisposablePointerEvent {
                 return .droppedDisposable
             } else {
                 return .criticalOverflow
@@ -51,12 +52,40 @@ struct OutboundMessageQueue {
             messages[index].deltaY = (messages[index].deltaY ?? 0) + (message.deltaY ?? 0)
             return true
         case .scroll:
+            guard messages[index].canCoalesceScroll(with: message) else { return false }
             messages[index].scrollX = (messages[index].scrollX ?? 0) + (message.scrollX ?? 0)
             messages[index].scrollY = (messages[index].scrollY ?? 0) + (message.scrollY ?? 0)
+            if messages[index].scrollPreciseX != nil || message.scrollPreciseX != nil {
+                messages[index].scrollPreciseX =
+                    (messages[index].scrollPreciseX ?? 0) + (message.scrollPreciseX ?? 0)
+                messages[index].scrollPreciseY =
+                    (messages[index].scrollPreciseY ?? 0) + (message.scrollPreciseY ?? 0)
+            }
             return true
         default:
             return false
         }
+    }
+}
+
+private extension WireMessage {
+    var isDisposablePointerEvent: Bool {
+        type == .mouseMove || (type == .scroll && isCoalescibleScroll)
+    }
+
+    func canCoalesceScroll(with other: WireMessage) -> Bool {
+        isCoalescibleScroll && other.isCoalescibleScroll
+            && scrollPhase == other.scrollPhase
+            && scrollMomentumPhase == other.scrollMomentumPhase
+            && scrollContinuous == other.scrollContinuous
+    }
+
+    var isCoalescibleScroll: Bool {
+        guard type == .scroll else { return false }
+        if scrollPhase == nil, scrollMomentumPhase == nil { return true }
+        let changed = UInt64(CGScrollPhase.changed.rawValue)
+        return (scrollPhase == nil || scrollPhase == changed)
+            && (scrollMomentumPhase == nil || scrollMomentumPhase == changed)
     }
 }
 

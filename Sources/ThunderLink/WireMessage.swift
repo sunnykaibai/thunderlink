@@ -22,6 +22,7 @@ enum WireMessageType: String, Codable {
     case mouseMove
     case mouseButton
     case scroll
+    case appGesture
     case release
     case ping
     case pong
@@ -43,6 +44,12 @@ struct WireMessage: Codable, Equatable {
     var clickCount: Int? = nil
     var scrollX: Double? = nil
     var scrollY: Double? = nil
+    var scrollPreciseX: Double? = nil
+    var scrollPreciseY: Double? = nil
+    var scrollPhase: UInt64? = nil
+    var scrollMomentumPhase: UInt64? = nil
+    var scrollContinuous: Bool? = nil
+    var appGesture: AppTrackpadGesture? = nil
     var message: String? = nil
     var capabilities: [String]? = nil
 

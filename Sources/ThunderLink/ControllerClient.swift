@@ -4,6 +4,7 @@ import Network
 final class ControllerClient {
     var onStatus: ((String) -> Void)?
     var onReady: (() -> Void)?
+    var onAppGestureCapabilityChanged: ((Bool) -> Void)?
     var onRelease: (() -> Void)?
     var onDisconnected: (() -> Void)?
     var onAuthenticationRejected: (() -> Void)?
@@ -17,6 +18,7 @@ final class ControllerClient {
     private var connectionTimer: DispatchSourceTimer?
     private var awaitingHelloAck = false
     private var remoteReleaseReceived = false
+    private var remoteSupportsAppGestures = false
     private let connectionTimeout: TimeInterval
 
     init(connectionTimeout: TimeInterval = 12) {
@@ -100,6 +102,7 @@ final class ControllerClient {
         authenticated = false
         awaitingHelloAck = false
         remoteReleaseReceived = false
+        setRemoteAppGestureSupport(false)
         pendingMessages.reset()
         stopConnectionDeadline()
         stopHeartbeat()
@@ -140,6 +143,9 @@ final class ControllerClient {
             if message.capabilities?.contains("heartbeat-v1") == true {
                 startHeartbeat(for: framed)
             }
+            setRemoteAppGestureSupport(
+                message.capabilities?.contains("app-gesture-v1") == true
+            )
             onStatus?("已配对；把指针移到所选屏幕边缘即可控制对端")
             onReady?()
         case .pong:
@@ -162,6 +168,7 @@ final class ControllerClient {
         authenticated = false
         awaitingHelloAck = false
         remoteReleaseReceived = false
+        setRemoteAppGestureSupport(false)
         pendingMessages.reset()
         stopConnectionDeadline()
         stopHeartbeat()
@@ -190,9 +197,16 @@ final class ControllerClient {
         let messages = pendingMessages.drain()
         guard authenticated, let framed else { return }
         for message in messages {
+            if message.type == .appGesture, !remoteSupportsAppGestures { continue }
             if message.type == .activate { remoteReleaseReceived = false }
             framed.send(message)
         }
+    }
+
+    private func setRemoteAppGestureSupport(_ supported: Bool) {
+        guard remoteSupportsAppGestures != supported else { return }
+        remoteSupportsAppGestures = supported
+        onAppGestureCapabilityChanged?(supported)
     }
 
     private func stopConnectionDeadline() {
