@@ -86,6 +86,7 @@ final class AppModel: ObservableObject {
         targetPeerName = defaults.string(forKey: DefaultsKey.targetPeerName)
         bindServices()
         refreshSystemState()
+        ThunderLinkLog.input.notice("Startup permissions: accessibility=\(self.accessibilityGranted, privacy: .public), inputMonitoring=\(self.inputMonitoringGranted, privacy: .public)")
         refreshLoginItemStatus()
         initialized = true
         resumeSavedRole()

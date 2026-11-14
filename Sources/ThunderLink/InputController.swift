@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import notify
 
 final class InputController {
     var onSend: ((WireMessage) -> Void)?
@@ -11,6 +12,10 @@ final class InputController {
     private(set) var isControlling = false
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var rightOptionTap: CFMachPort?
+    private var rightOptionSource: CFRunLoopSource?
+    private var tapNotificationToken: Int32?
+    private var otherModifierTapIDs: Set<UInt32> = []
     private var lastRelease = Date.distantPast
     private var entryPoint = CGPoint.zero
     private var cursorDisplayID: CGDirectDisplayID?
@@ -68,6 +73,88 @@ final class InputController {
         CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         isReady = true
+        var token: Int32 = 0
+        if notify_register_dispatch(kCGNotifyEventTapAdded, &token, .main, { [weak self] _ in
+            self?.refreshRightOptionTapIfNeeded()
+        }) == NOTIFY_STATUS_OK {
+            tapNotificationToken = token
+        }
+    }
+
+    // Input methods may install their own head filter after we connect. Take
+    // priority for this shortcut on each transfer, without disturbing the
+    // mouse tap whose callback is currently processing the crossing.
+    private func installRightOptionTap() -> Bool {
+        guard let tap = CGEvent.tapCreate(
+            tap: .cghidEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(1) << CGEventType.flagsChanged.rawValue,
+            callback: { _, type, event, refcon in
+                guard let refcon else { return Unmanaged.passUnretained(event) }
+                let controller = Unmanaged<InputController>.fromOpaque(refcon).takeUnretainedValue()
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let tap = controller.rightOptionTap { CGEvent.tapEnable(tap: tap, enable: true) }
+                    return controller.handle(type: type, event: event)
+                }
+                return controller.handleRightOption(type: type, event: event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        ) else { return false }
+        guard let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            CFMachPortInvalidate(tap)
+            return false
+        }
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        removeRightOptionTap()
+        rightOptionTap = tap
+        rightOptionSource = source
+        return true
+    }
+
+    private func handleRightOption(type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
+        let key = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+        guard type == .flagsChanged, localInputState.capturesRightOption(key, controllingRemote: isControlling) else {
+            return Unmanaged.passUnretained(event)
+        }
+        // The main tap never sees a consumed event. Share its forwarding and
+        // held-key cleanup so the receiver gets exactly one transition.
+        return handle(type: type, event: event)
+    }
+
+    private func removeRightOptionTap() {
+        if let source = rightOptionSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
+        if let tap = rightOptionTap { CFMachPortInvalidate(tap) }
+        rightOptionTap = nil
+        rightOptionSource = nil
+    }
+
+    private func refreshRightOptionTapIfNeeded() {
+        guard isControlling, let current = Self.foreignModifierTapIDs() else { return }
+        let hasNewFilter = !current.isSubset(of: otherModifierTapIDs)
+        otherModifierTapIDs = current
+        guard hasNewFilter else { return }
+        if !installRightOptionTap() {
+            onSend?(WireMessage(type: .release))
+            releaseFromRemote()
+            onError?("无法接管右 Option，已恢复本机控制")
+        }
+    }
+
+    // The system notification includes our own new tap. Compare foreign IDs
+    // rather than depending on an undocumented order in CGGetEventTapList.
+    private static func foreignModifierTapIDs() -> Set<UInt32>? {
+        var count: UInt32 = 0
+        guard CGGetEventTapList(0, nil, &count) == .success else { return nil }
+        var taps = [CGEventTapInformation](repeating: CGEventTapInformation(), count: Int(count) + 16)
+        let capacity = UInt32(taps.count)
+        guard CGGetEventTapList(capacity, &taps, &count) == .success, count <= capacity else { return nil }
+        let mask = CGEventMask(1) << CGEventType.flagsChanged.rawValue
+        return Set(taps.prefix(Int(count)).filter {
+            $0.tappingProcess != getpid() && $0.tapPoint == .cghidEventTap &&
+            $0.eventsOfInterest & mask != 0
+        }.map(\.eventTapID))
     }
 
     func stopMonitoring(force: Bool = false) {
@@ -84,6 +171,9 @@ final class InputController {
     }
 
     private func finishStoppingMonitoring() {
+        if let token = tapNotificationToken { notify_cancel(token) }
+        tapNotificationToken = nil
+        removeRightOptionTap()
         if let source = runLoopSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         if let eventTap { CFMachPortInvalidate(eventTap) }
         eventTap = nil
@@ -184,6 +274,13 @@ final class InputController {
                 lastRelease = Date()
                 ThunderLinkLog.input.error("local cursor lock failed; remote activation refused")
                 onError?("无法固定本机光标，未开始远端控制")
+                return Unmanaged.passUnretained(event)
+            }
+            otherModifierTapIDs = Self.foreignModifierTapIDs() ?? []
+            guard installRightOptionTap() else {
+                cursorLock.release()
+                lastRelease = Date()
+                onError?("无法接管右 Option，未开始远端控制")
                 return Unmanaged.passUnretained(event)
             }
             isControlling = true

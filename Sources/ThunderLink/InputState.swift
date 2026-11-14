@@ -14,6 +14,10 @@ struct InputState {
         !suppressedButtons.isEmpty || !suppressedKeys.isEmpty
     }
 
+    func capturesRightOption(_ key: CGKeyCode, controllingRemote: Bool) -> Bool {
+        key == 61 && (controllingRemote || suppressedKeys.contains(key))
+    }
+
     func shouldSuppressDrag(button: Int) -> Bool {
         suppressedButtons.contains(button)
     }
