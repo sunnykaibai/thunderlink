@@ -89,6 +89,32 @@ struct InputState {
         suppressedKeys.removeAll()
     }
 
+    static let controlKeys: [CGKeyCode] = [59, 62]
+
+    /// A click or ordinary key carries the modifier snapshot for that event.
+    /// Recover a missed Control transition before forwarding the input it affects.
+    mutating func reconcileControls(flags: CGEventFlags, send: (WireMessage) -> Void) {
+        let hasControl = flags.contains(.maskControl)
+        let sideBits = flags.rawValue & 0x2001
+        let anyTracked = pressedKeys.contains(59) || pressedKeys.contains(62)
+        for key in Self.controlKeys {
+            let held = pressedKeys.contains(key)
+            let desired: Bool
+            if !hasControl {
+                desired = false
+            } else if sideBits != 0 {
+                desired = Self.modifierIsDown(key: key, flags: flags) == true
+            } else {
+                // Preserve a known side when the device supplies only aggregate flags.
+                desired = anyTracked ? held : key == 59
+            }
+            guard desired != held else { continue }
+            let kind = desired ? "down" : "up"
+            observeKey(key, kind: kind, flags: flags)
+            send(WireMessage(type: .key, keyCode: key, eventKind: kind, flags: flags.rawValue))
+        }
+    }
+
     static func isEmergencyRelease(
         key: CGKeyCode,
         kind: String,

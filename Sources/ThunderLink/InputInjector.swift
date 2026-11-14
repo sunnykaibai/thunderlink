@@ -158,6 +158,9 @@ final class InputInjector {
         let button = CGMouseButton(rawValue: UInt32(number)) ?? .left
         let type = isDown ? downType(for: number) : upType(for: number)
         if let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: position, mouseButton: button) {
+            if let flags = message.flags {
+                event.flags = CGEventFlags(rawValue: flags).intersection(RemoteClicks.modifierMask)
+            }
             if let clickCount = message.clickCount,
                clickCount >= 0,
                clickCount <= Int(Int32.max) {

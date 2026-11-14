@@ -1,6 +1,6 @@
 # ThunderLink
 
-ThunderLink 0.3.9 是一个只通过 macOS `Thunderbolt Bridge` 共享键盘和鼠标的 App。同一个 App 安装在两台 Mac 上，一台选择“控制另一台 Mac”，另一台选择“允许这台 Mac 被控制”。
+ThunderLink 0.3.10 是一个只通过 macOS `Thunderbolt Bridge` 共享键盘和鼠标的 App。同一个 App 安装在两台 Mac 上，一台选择“控制另一台 Mac”，另一台选择“允许这台 Mac 被控制”。
 
 Keyboard and mouse sharing between two Macs over Thunderbolt Bridge.
 

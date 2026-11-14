@@ -120,8 +120,16 @@ struct DockSwipeTests {
             let entry = events[0].location
             events.removeAll()
             let controller = InputController()
-            controller.onSend = receiver.handle
+            var controlTransitions: [String] = []
+            controller.onSend = { message in
+                if message.keyCode == 59, let kind = message.eventKind {
+                    controlTransitions.append(kind)
+                }
+                receiver.handle(message)
+            }
             controller.sendDesktopShortcut(arrow)
+            // Older receivers track keys for disconnect cleanup only for down/up.
+            #expect(controlTransitions == ["down", "up"])
             #expect(events.map(\.type) == [.flagsChanged, .keyDown, .keyUp, .flagsChanged, .mouseMoved])
             #expect(events[1].getIntegerValueField(.keyboardEventKeycode) == Int64(arrow))
             #expect(events[1].flags.contains([.maskControl, .maskNumericPad, .maskSecondaryFn]))

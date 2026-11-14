@@ -16,6 +16,26 @@ struct InputStateTests {
         #expect(!state.hasPressedInput)
     }
 
+    @Test func plainClickRecoversAMissedControlUpWithoutClearingShift() {
+        var state = InputState()
+        state.observeKey(62, kind: "down", flags: [.maskControl])
+        var repairs: [WireMessage] = []
+        state.reconcileControls(flags: [.maskShift]) { repairs.append($0) }
+        state.reconcileControls(flags: [.maskShift]) { repairs.append($0) }
+        #expect(repairs == [WireMessage(type: .key, keyCode: 62, eventKind: "up", flags: CGEventFlags.maskShift.rawValue)])
+        #expect(!state.hasPressedInput)
+    }
+
+    @Test func controlClickWithTheRightControlKeyHeldKeepsItsSide() {
+        var state = InputState()
+        let right = CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | 0x2000)
+        var repairs: [WireMessage] = []
+        state.reconcileControls(flags: right) { repairs.append($0) }
+        state.reconcileControls(flags: [.maskControl]) { repairs.append($0) }
+        #expect(repairs == [WireMessage(type: .key, keyCode: 62, eventKind: "down", flags: right.rawValue)])
+        #expect(state.pressedKeys == [62])
+    }
+
     @Test func modifierFlagsAreTrackedAndReleased() {
         var state = InputState()
         state.observeKey(59, kind: "flags", flags: CGEventFlags(rawValue: CGEventFlags.maskControl.rawValue | 0x1))

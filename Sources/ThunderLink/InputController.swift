@@ -31,6 +31,7 @@ final class InputController {
     private var stopCleanupScheduled = false
     private let cursorLock = LocalCursorLock()
     private var localInputState = InputState()
+    private var remoteClicks = RemoteClicks()
     private let physicalInputSnapshot: () -> InputState
 
     init(physicalInputSnapshot: @escaping () -> InputState = InputController.readPhysicalInputState) {
@@ -164,10 +165,10 @@ final class InputController {
         // On macOS, arrow key events include both the keypad and function-key
         // classification bits. Modifier transitions have neither.
         let arrowFlags = control | CGEventFlags.maskNumericPad.rawValue | CGEventFlags.maskSecondaryFn.rawValue
-        onSend?(WireMessage(type: .key, keyCode: 59, eventKind: "flags", flags: control))
+        onSend?(WireMessage(type: .key, keyCode: 59, eventKind: "down", flags: control))
         onSend?(WireMessage(type: .key, keyCode: arrow, eventKind: "down", flags: arrowFlags))
         onSend?(WireMessage(type: .key, keyCode: arrow, eventKind: "up", flags: arrowFlags))
-        onSend?(WireMessage(type: .key, keyCode: 59, eventKind: "flags", flags: 0))
+        onSend?(WireMessage(type: .key, keyCode: 59, eventKind: "up", flags: 0))
         // Some apps hide the pointer on typing. Refresh it at the same position
         // after this trackpad-generated shortcut, including on older receivers.
         onSend?(WireMessage(type: .mouseMove, deltaX: 0, deltaY: 0))
@@ -394,6 +395,7 @@ final class InputController {
                 onError?("无法接管右 Option，未开始远端控制")
                 return Unmanaged.passUnretained(event)
             }
+            remoteClicks = RemoteClicks()
             isControlling = true
             entryPoint = event.location
             cursorDisplayID = display.id
@@ -429,27 +431,33 @@ final class InputController {
                 onError?("无法继续固定本机光标，已停止远端控制")
                 return nil
             }
+            remoteClicks.move(dx: Double(dx), dy: Double(dy))
             onSend?(WireMessage(
                 type: .mouseMove,
                 deltaX: Double(dx),
                 deltaY: Double(dy)
             ))
         case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
-            onSend?(WireMessage(
-                type: .mouseButton,
-                eventKind: isButtonDown(type) ? "down" : "up",
-                button: Int(event.getIntegerValueField(.mouseEventButtonNumber)),
-                clickCount: Int(event.getIntegerValueField(.mouseEventClickState))
-            ))
+            guard let click = remoteClicks.message(type: type, event: event) else { return nil }
+            localInputState.reconcileControls(flags: event.flags) { onSend?($0) }
+            onSend?(click)
         case .scrollWheel:
             onSend?(ScrollGesture.message(from: event))
         case .keyDown, .keyUp, .flagsChanged:
-            onSend?(WireMessage(
-                type: .key,
-                keyCode: UInt16(event.getIntegerValueField(.keyboardEventKeycode)),
-                eventKind: type == .keyUp ? "up" : (type == .flagsChanged ? "flags" : "down"),
-                flags: event.flags.rawValue
-            ))
+            let key = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
+            let kind: String
+            if type == .flagsChanged && InputState.controlKeys.contains(key) {
+                // Older receivers only track explicit down/up for disconnect
+                // cleanup. CoreGraphics creates a flagsChanged event for Control
+                // in either direction when constructed with its virtual key code.
+                kind = localInputState.pressedKeys.contains(key) ? "down" : "up"
+            } else {
+                if type != .flagsChanged && !InputState.controlKeys.contains(key) {
+                    localInputState.reconcileControls(flags: event.flags) { onSend?($0) }
+                }
+                kind = type == .flagsChanged ? "flags" : (type == .keyUp ? "up" : "down")
+            }
+            onSend?(WireMessage(type: .key, keyCode: key, eventKind: kind, flags: event.flags.rawValue))
         default: break
         }
         return nil
@@ -458,10 +466,14 @@ final class InputController {
     static func activationMessages(edge: TransferEdge) -> [WireMessage] {
         // Existing receivers enter only three points from the return edge.
         // Move inward once on handoff so a small reversal does not hand back.
-        [
-            WireMessage(type: .activate, edge: edge),
-            WireMessage(type: .mouseMove, deltaX: edge == .right ? 24 : -24, deltaY: 0)
-        ]
+        // Transfer is allowed only after all controller keys are released.
+        // Use explicit up messages to clear residual Control on older receivers.
+        var messages = [WireMessage(type: .activate, edge: edge)]
+        for key in InputState.controlKeys {
+            messages.append(WireMessage(type: .key, keyCode: key, eventKind: "up", flags: 0))
+        }
+        messages.append(WireMessage(type: .mouseMove, deltaX: edge == .right ? 24 : -24, deltaY: 0))
+        return messages
     }
 
     private func shouldActivate(type: CGEventType, event: CGEvent) -> Bool {
@@ -492,16 +504,9 @@ final class InputController {
 
     private func observeLocalInput(type: CGEventType, event: CGEvent) -> Bool {
         switch type {
-        case .leftMouseDown, .rightMouseDown, .otherMouseDown:
-            return localInputState.observeButton(
-                Int(event.getIntegerValueField(.mouseEventButtonNumber)),
-                isDown: true
-            )
-        case .leftMouseUp, .rightMouseUp, .otherMouseUp:
-            return localInputState.observeButton(
-                Int(event.getIntegerValueField(.mouseEventButtonNumber)),
-                isDown: false
-            )
+        case .leftMouseDown, .rightMouseDown, .otherMouseDown, .leftMouseUp, .rightMouseUp, .otherMouseUp:
+            guard let number = RemoteClicks.buttonNumber(type: type, event: event) else { return false }
+            return localInputState.observeButton(number, isDown: isButtonDown(type))
         case .leftMouseDragged:
             return localInputState.shouldSuppressDrag(button: 0)
         case .rightMouseDragged:

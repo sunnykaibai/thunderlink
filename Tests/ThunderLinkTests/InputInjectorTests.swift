@@ -54,6 +54,23 @@ struct InputInjectorTests {
         #expect(releasedEvent?.flags.isEmpty == true)
     }
 
+    @Test func receiverAppliesModifiersFromEachClickAndPreservesItsButton() throws {
+        var posted: [CGEvent] = []
+        let receiver = InputInjector(eventPoster: { posted.append($0) }, primaryBounds: {
+            CGRect(x: 0, y: 0, width: 100, height: 100)
+        })
+        receiver.activate(edge: .right)
+        let control = CGEventFlags.maskControl.rawValue | 0x2000
+        for flags: UInt64 in [control, 0] {
+            for kind in ["down", "up"] {
+                receiver.handle(WireMessage(type: .mouseButton, eventKind: kind, flags: flags, button: 0, clickCount: 1))
+            }
+        }
+        let clicks = posted.filter { $0.type == .leftMouseDown || $0.type == .leftMouseUp }
+        #expect(clicks.map { $0.flags.rawValue } == [control, control, 0, 0])
+        #expect(clicks.map { $0.getIntegerValueField(.mouseEventClickState) } == [1, 1, 1, 1])
+    }
+
     @Test func releaseClearsButtonsBeforeASecondRelease() {
         var postedTypes: [CGEventType] = []
         let injector = InputInjector(
