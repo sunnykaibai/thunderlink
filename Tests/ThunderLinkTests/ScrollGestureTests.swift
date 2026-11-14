@@ -36,6 +36,7 @@ struct ScrollGestureTests {
         let event = recorder.scrollEvents.first
         #expect(event?.getIntegerValueField(.scrollWheelEventPointDeltaAxis1) == 7)
         #expect(event?.getIntegerValueField(.scrollWheelEventPointDeltaAxis2) == -3)
+        #expect(event?.getIntegerValueField(.scrollWheelEventIsContinuous) == 1)
     }
 
     @Test func phaseBoundariesAreNeitherCoalescedNorDroppedAsDisposable() {
