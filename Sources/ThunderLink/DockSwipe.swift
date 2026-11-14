@@ -1,145 +1,76 @@
 import CoreGraphics
 
-/// Recognizes the Dock's private three/four-finger swipe event stream on
-/// macOS 15–26. It deliberately reduces a completed gesture to one system
-/// arrow key instead of serializing private CGEvent data across the network.
+/// Ownership is decided by the pointer when a swipe begins. Consume trailing
+/// frames after a handoff so a gesture cannot finish on a different Mac.
 struct DockSwipe {
-    private enum Axis: Int64, Equatable {
-        case horizontal = 1
-        case vertical = 2
-    }
-
     private enum State {
         case idle
-        case local(Axis)
-        case remote(Axis, progress: Double)
-        case draining(Axis)
-        case finishedRemote(Axis)
+        case remote(DesktopGestureFrame, native: Bool)
+        case draining(DesktopGestureFrame.Axis)
     }
 
-    private enum Phase: Int64 {
-        case began = 1
-        case changed = 2
-        case ended = 4
-        case cancelled = 8
+    struct Result {
+        var consume: Bool
+        var arrow: CGKeyCode? = nil
+        var frame: DesktopGestureFrame? = nil
     }
-
-    private static let dockControlEventType: UInt32 = 30
-    private static let dockSwipeHIDType: Int64 = 23
-    private static let minimumCommitProgress = 0.5
-    private static let minimumCommitVelocity = 0.08
 
     private var state: State = .idle
 
-    mutating func handle(_ event: CGEvent, remote: Bool) -> (consume: Bool, arrow: CGKeyCode?) {
-        guard event.type.rawValue == Self.dockControlEventType,
-              event.getIntegerValueField(Self.hidTypeField) == Self.dockSwipeHIDType,
-              let axis = Axis(rawValue: event.getIntegerValueField(Self.axisField)),
-              let phase = Phase(rawValue: event.getIntegerValueField(Self.phaseField)) else {
-            return (false, nil)
+    mutating func handle(_ event: CGEvent, remote: Bool, native: Bool = false) -> Result {
+        guard let frame = DesktopGestureFrame(capturing: event) else {
+            return Result(consume: false)
         }
+        if !remote { release() }
 
-        if !remote, case .remote(let activeAxis, _) = state {
-            state = .draining(activeAxis)
-        }
-
-        let progress = Self.progress(in: event)
-        switch phase {
-        case .began:
-            if remote {
-                state = .remote(axis, progress: progress)
-                return (true, nil)
-            }
-            state = .local(axis)
-            return (false, nil)
-
-        case .changed:
-            switch state {
-            case .remote(axis, _):
-                state = .remote(axis, progress: progress)
-                return (true, nil)
-            case .draining(axis), .finishedRemote(axis):
-                return (true, nil)
-            case .local(axis):
-                return (false, nil)
-            default:
-                return (false, nil)
-            }
-
-        case .ended, .cancelled:
-            switch state {
-            case .remote(axis, let previousProgress):
-                state = .finishedRemote(axis)
-                guard phase == .ended else { return (true, nil) }
-                let finalProgress = progress == 0 ? previousProgress : progress
-                return (true, Self.arrow(axis: axis, progress: finalProgress, event: event))
-            case .draining(axis):
-                state = .finishedRemote(axis)
-                return (true, nil)
-            case .finishedRemote(axis):
-                return (true, nil)
-            case .local(axis):
+        if frame.phase == .began {
+            guard remote, native || frame.axis != .pinch else {
                 state = .idle
-                return (false, nil)
-            default:
-                return (false, nil)
+                return Result(consume: false)
             }
+            state = .remote(frame, native: native)
+            return Result(consume: true, frame: native ? frame : nil)
+        }
+        switch state {
+        case .remote(let previous, let native) where previous.axis == frame.axis:
+            if frame.phase == .changed {
+                state = .remote(frame, native: native)
+                return Result(consume: true, frame: native ? frame : nil)
+            }
+            state = .draining(frame.axis)
+            if native { return Result(consume: true, frame: frame) }
+            let progress = frame.offset == 0 ? previous.offset : frame.offset
+            let arrow = frame.phase == .ended ? Self.arrow(frame, progress: progress) : nil
+            return Result(consume: true, arrow: arrow)
+        case .draining(let axis) where axis == frame.axis:
+            return Result(consume: true)
+        default:
+            return Result(consume: false)
         }
     }
 
-    /// Stops a remotely-owned gesture from leaking its remaining frames to the
-    /// local Dock after the pointer has returned to this Mac.
+    func cancelNativeGesture() -> DesktopGestureFrame? {
+        if case .remote(let frame, true) = state { return frame.cancellation }
+        return nil
+    }
+
     mutating func release() {
-        if case .remote(let axis, _) = state {
-            state = .draining(axis)
-        }
+        if case .remote(let frame, _) = state { state = .draining(frame.axis) }
     }
 
-    private static func arrow(axis: Axis, progress: Double, event: CGEvent) -> CGKeyCode? {
-        let velocityField = axis == .horizontal ? velocityXField : velocityYField
-        let velocity = event.getDoubleValueField(velocityField)
-        let meaningfulVelocity = velocity.isFinite && abs(velocity) >= minimumCommitVelocity
-        let meaningfulProgress = progress.isFinite && abs(progress) >= minimumCommitProgress
-
-        if meaningfulVelocity, meaningfulProgress,
-           (velocity > 0) != (progress > 0) {
+    private static func arrow(_ frame: DesktopGestureFrame, progress: Double) -> CGKeyCode? {
+        let velocity = frame.axis == .horizontal ? frame.velocityX : frame.velocityY
+        let meaningfulVelocity = abs(velocity) >= 0.08
+        let meaningfulProgress = abs(progress) >= 0.5
+        guard meaningfulVelocity || meaningfulProgress else { return nil }
+        if meaningfulVelocity && meaningfulProgress && (velocity > 0) != (progress > 0) {
             return nil
         }
-        let direction: Double
-        if meaningfulVelocity {
-            direction = velocity
-        } else if meaningfulProgress {
-            direction = progress
-        } else {
-            return nil
-        }
-
-        switch axis {
-        case .horizontal:
-            return direction > 0 ? 124 : 123 // Right / Left
-        case .vertical:
-            return direction > 0 ? 126 : 125 // Up / Down
+        let direction = meaningfulVelocity ? velocity : progress
+        switch frame.axis {
+        case .horizontal: return direction > 0 ? 124 : 123
+        case .vertical: return direction > 0 ? 126 : 125
+        case .pinch: return nil
         }
     }
-
-    private static func progress(in event: CGEvent) -> Double {
-        let direct = event.getDoubleValueField(progressField)
-        if direct.isFinite, direct != 0 { return direct }
-
-        let encoded = UInt32(truncatingIfNeeded: event.getIntegerValueField(encodedProgressField))
-        let decoded = Double(Float(bitPattern: encoded))
-        return decoded.isFinite ? decoded : 0
-    }
-
-    private static func field(_ rawValue: UInt32) -> CGEventField {
-        CGEventField(rawValue: rawValue)!
-    }
-
-    private static let hidTypeField = field(110)
-    private static let axisField = field(123)
-    private static let progressField = field(124)
-    private static let velocityXField = field(129)
-    private static let velocityYField = field(130)
-    private static let phaseField = field(132)
-    private static let encodedProgressField = field(135)
 }

@@ -170,17 +170,28 @@ final class ReceiverService {
             authenticated = true
             cancelHandshakeTimer()
             onControllerChanged?(name)
+            let desktopGesturesSupported = DesktopGestureFrame.isSupportedOnThisOS
+            var capabilities = ["heartbeat-v1", "app-gesture-v1"]
+            if desktopGesturesSupported { capabilities.append("desktop-gesture-v1") }
             framed.send(WireMessage(
                 type: .helloAck,
                 protocolVersion: 2,
                 edge: edge,
-                capabilities: ["heartbeat-v1", "app-gesture-v1"]
+                capabilities: capabilities
             ))
+            ThunderLinkLog.network.info(
+                "controller capabilities: heartbeat=\(message.capabilities?.contains("heartbeat-v1") == true, privacy: .public), receiver desktopGesture=\(desktopGesturesSupported, privacy: .public)"
+            )
             onStatus?("已与 \(name) 通过 bridge0 配对")
             return
         }
         if message.type == .ping {
             framed.send(WireMessage(type: .pong))
+            return
+        }
+        if message.type == .desktopGesture,
+           (!DesktopGestureFrame.isSupportedOnThisOS || message.desktopGesture == nil) {
+            ThunderLinkLog.network.error("ignored unsupported or malformed desktop gesture frame")
             return
         }
         onAuthenticatedMessage?(message)

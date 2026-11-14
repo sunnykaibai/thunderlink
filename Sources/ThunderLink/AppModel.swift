@@ -438,6 +438,11 @@ final class AppModel: ObservableObject {
                 self?.inputController.supportsAppGestures = supported
             }
         }
+        controller.onDesktopGestureCapabilityChanged = { [weak self] supported in
+            DispatchQueue.main.async {
+                self?.inputController.supportsDesktopGestures = supported
+            }
+        }
         controller.onRelease = { [weak self] in
             DispatchQueue.main.async { self?.inputController.releaseFromRemote() }
         }
@@ -451,6 +456,7 @@ final class AppModel: ObservableObject {
         controller.onDisconnected = { [weak self] in
             DispatchQueue.main.async {
                 self?.inputController.supportsAppGestures = false
+                self?.inputController.supportsDesktopGestures = false
                 self?.inputController.stopMonitoring()
                 self?.controllerConnected = false
                 self?.controllerConnecting = false

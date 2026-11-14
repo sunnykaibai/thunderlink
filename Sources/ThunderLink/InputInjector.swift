@@ -9,6 +9,7 @@ final class InputInjector {
     private var position = CGPoint.zero
     private var inputState = InputState()
     private var openAppGestures: [AppTrackpadGesture.Kind: AppTrackpadGesture] = [:]
+    private let desktopPlayback: DesktopGesturePlayback
     private var scrollRemainderX = 0.0
     private var scrollRemainderY = 0.0
     private let source = CGEventSource(stateID: .hidSystemState)
@@ -17,13 +18,16 @@ final class InputInjector {
 
     init(
         eventPoster: @escaping (CGEvent) -> Void = { $0.post(tap: .cghidEventTap) },
+        desktopPlayback: DesktopGesturePlayback = DesktopGesturePlayback(),
         primaryBounds: @escaping () -> CGRect? = { DisplayGeometry.primary()?.bounds }
     ) {
+        self.desktopPlayback = desktopPlayback
         self.eventPoster = eventPoster
         self.primaryBounds = primaryBounds
     }
 
     func activate(edge: TransferEdge) {
+        if active { releaseAll() }
         self.edge = edge
         guard let bounds = primaryBounds() else {
             onReleaseRequested?()
@@ -50,6 +54,9 @@ final class InputInjector {
         case .scroll:
             guard active else { return }
             postScroll(message)
+        case .desktopGesture:
+            guard active, let frame = message.desktopGesture else { return }
+            desktopPlayback.handle(frame, at: position)
         case .appGesture:
             guard active, let gesture = message.appGesture else { return }
             switch gesture.phase {
@@ -74,6 +81,7 @@ final class InputInjector {
     func releaseAll() {
         guard active || inputState.hasPressedInput else { return }
         clampPositionToCurrentDisplay()
+        desktopPlayback.cancel(at: position)
         for gesture in openAppGestures.values {
             if let event = gesture.closingFrame?.makeEvent(at: position) { eventPoster(event) }
         }

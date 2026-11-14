@@ -51,6 +51,14 @@ struct OutboundMessageQueue {
             messages[index].deltaX = (messages[index].deltaX ?? 0) + (message.deltaX ?? 0)
             messages[index].deltaY = (messages[index].deltaY ?? 0) + (message.deltaY ?? 0)
             return true
+        case .desktopGesture:
+            // Offsets are absolute. Keep the most recent sample between two
+            // phase transitions without dropping the begin or terminal frame.
+            guard let previous = messages[index].desktopGesture,
+                  let next = message.desktopGesture, previous.phase == .changed,
+                  next.phase == .changed, previous.axis == next.axis else { return false }
+            messages[index] = message
+            return true
         case .scroll:
             guard messages[index].canCoalesceScroll(with: message) else { return false }
             messages[index].scrollX = (messages[index].scrollX ?? 0) + (message.scrollX ?? 0)
@@ -71,6 +79,7 @@ struct OutboundMessageQueue {
 private extension WireMessage {
     var isDisposablePointerEvent: Bool {
         type == .mouseMove || (type == .scroll && isCoalescibleScroll)
+            || (type == .desktopGesture && desktopGesture?.phase == .changed)
     }
 
     func canCoalesceScroll(with other: WireMessage) -> Bool {

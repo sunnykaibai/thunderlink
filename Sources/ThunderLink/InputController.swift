@@ -8,6 +8,7 @@ final class InputController {
     var onError: ((String) -> Void)?
 
     var supportsAppGestures = false
+    var supportsDesktopGestures = false
     private var gestureTap: CFMachPort?
     private var gestureSource: CFRunLoopSource?
     private var dockSwipe = DockSwipe()
@@ -116,6 +117,9 @@ final class InputController {
                 guard let context else { return Unmanaged.passUnretained(event) }
                 let controller = Unmanaged<InputController>.fromOpaque(context).takeUnretainedValue()
                 if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    if let frame = controller.dockSwipe.cancelNativeGesture() {
+                        controller.onSend?(WireMessage(type: .desktopGesture, desktopGesture: frame))
+                    }
                     controller.dockSwipe.release()
                     if let tap = controller.gestureTap { CGEvent.tapEnable(tap: tap, enable: true) }
                     return Unmanaged.passUnretained(event)
@@ -136,9 +140,14 @@ final class InputController {
     }
 
     private func handleGesture(_ event: CGEvent) -> Unmanaged<CGEvent>? {
-        let result = dockSwipe.handle(event, remote: isControlling)
+        let result = dockSwipe.handle(event, remote: isControlling, native: supportsDesktopGestures && DesktopGestureFrame.isSupportedOnThisOS)
         if result.consume {
-            if let key = result.arrow, isControlling, !localInputState.hasPressedInput {
+            if let frame = result.frame {
+                if frame.phase == .ended {
+                    ThunderLinkLog.input.info("Forwarded native desktop gesture on axis \(frame.axis.rawValue, privacy: .public)")
+                }
+                onSend?(WireMessage(type: .desktopGesture, desktopGesture: frame))
+            } else if let key = result.arrow, isControlling, !localInputState.hasPressedInput {
                 sendDesktopShortcut(key)
             }
             return nil
@@ -150,13 +159,19 @@ final class InputController {
         return Unmanaged.passUnretained(event)
     }
 
-    private func sendDesktopShortcut(_ arrow: CGKeyCode) {
+    func sendDesktopShortcut(_ arrow: CGKeyCode) {
         let control = CGEventFlags.maskControl.rawValue | 0x01
+        // On macOS, arrow key events include both the keypad and function-key
+        // classification bits. Modifier transitions have neither.
+        let arrowFlags = control | CGEventFlags.maskNumericPad.rawValue | CGEventFlags.maskSecondaryFn.rawValue
         onSend?(WireMessage(type: .key, keyCode: 59, eventKind: "flags", flags: control))
-        onSend?(WireMessage(type: .key, keyCode: arrow, eventKind: "down", flags: control))
-        onSend?(WireMessage(type: .key, keyCode: arrow, eventKind: "up", flags: control))
+        onSend?(WireMessage(type: .key, keyCode: arrow, eventKind: "down", flags: arrowFlags))
+        onSend?(WireMessage(type: .key, keyCode: arrow, eventKind: "up", flags: arrowFlags))
         onSend?(WireMessage(type: .key, keyCode: 59, eventKind: "flags", flags: 0))
-        ThunderLinkLog.input.info("Forwarded desktop gesture shortcut")
+        // Some apps hide the pointer on typing. Refresh it at the same position
+        // after this trackpad-generated shortcut, including on older receivers.
+        onSend?(WireMessage(type: .mouseMove, deltaX: 0, deltaY: 0))
+        ThunderLinkLog.input.info("Forwarded desktop gesture using Control and arrow \(arrow, privacy: .public)")
     }
 
     // Input methods may install their own head filter after we connect. Take
@@ -395,7 +410,7 @@ final class InputController {
                 }
             }
             ThunderLinkLog.input.notice("remote control started; local cursor pinned, foreground=\(NSApplication.shared.isActive, privacy: .public)")
-            onSend?(WireMessage(type: .activate, edge: transferEdge))
+            for message in Self.activationMessages(edge: transferEdge) { onSend?(message) }
             onActiveChanged?(true)
             return nil
         }
@@ -438,6 +453,15 @@ final class InputController {
         default: break
         }
         return nil
+    }
+
+    static func activationMessages(edge: TransferEdge) -> [WireMessage] {
+        // Existing receivers enter only three points from the return edge.
+        // Move inward once on handoff so a small reversal does not hand back.
+        [
+            WireMessage(type: .activate, edge: edge),
+            WireMessage(type: .mouseMove, deltaX: edge == .right ? 24 : -24, deltaY: 0)
+        ]
     }
 
     private func shouldActivate(type: CGEventType, event: CGEvent) -> Bool {

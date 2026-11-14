@@ -5,6 +5,7 @@ final class ControllerClient {
     var onStatus: ((String) -> Void)?
     var onReady: (() -> Void)?
     var onAppGestureCapabilityChanged: ((Bool) -> Void)?
+    var onDesktopGestureCapabilityChanged: ((Bool) -> Void)?
     var onRelease: (() -> Void)?
     var onDisconnected: (() -> Void)?
     var onAuthenticationRejected: (() -> Void)?
@@ -19,6 +20,7 @@ final class ControllerClient {
     private var awaitingHelloAck = false
     private var remoteReleaseReceived = false
     private var remoteSupportsAppGestures = false
+    private var remoteSupportsDesktopGestures = false
     private let connectionTimeout: TimeInterval
 
     init(connectionTimeout: TimeInterval = 12) {
@@ -103,6 +105,7 @@ final class ControllerClient {
         awaitingHelloAck = false
         remoteReleaseReceived = false
         setRemoteAppGestureSupport(false)
+        setRemoteDesktopGestureSupport(false)
         pendingMessages.reset()
         stopConnectionDeadline()
         stopHeartbeat()
@@ -146,6 +149,12 @@ final class ControllerClient {
             setRemoteAppGestureSupport(
                 message.capabilities?.contains("app-gesture-v1") == true
             )
+            setRemoteDesktopGestureSupport(
+                message.capabilities?.contains("desktop-gesture-v1") == true
+            )
+            ThunderLinkLog.network.info(
+                "peer capabilities: heartbeat=\(message.capabilities?.contains("heartbeat-v1") == true, privacy: .public), appGesture=\(self.remoteSupportsAppGestures, privacy: .public), desktopGesture=\(self.remoteSupportsDesktopGestures, privacy: .public)"
+            )
             onStatus?("已配对；把指针移到所选屏幕边缘即可控制对端")
             onReady?()
         case .pong:
@@ -153,6 +162,7 @@ final class ControllerClient {
         case .release:
             guard authenticated, !remoteReleaseReceived else { return }
             remoteReleaseReceived = true
+            ThunderLinkLog.input.notice("Receiver requested pointer return")
             onRelease?()
         case .error:
             if awaitingHelloAck && !authenticated { onAuthenticationRejected?() }
@@ -169,6 +179,7 @@ final class ControllerClient {
         awaitingHelloAck = false
         remoteReleaseReceived = false
         setRemoteAppGestureSupport(false)
+        setRemoteDesktopGestureSupport(false)
         pendingMessages.reset()
         stopConnectionDeadline()
         stopHeartbeat()
@@ -198,6 +209,7 @@ final class ControllerClient {
         guard authenticated, let framed else { return }
         for message in messages {
             if message.type == .appGesture, !remoteSupportsAppGestures { continue }
+            if message.type == .desktopGesture, !remoteSupportsDesktopGestures { continue }
             if message.type == .activate { remoteReleaseReceived = false }
             framed.send(message)
         }
@@ -207,6 +219,12 @@ final class ControllerClient {
         guard remoteSupportsAppGestures != supported else { return }
         remoteSupportsAppGestures = supported
         onAppGestureCapabilityChanged?(supported)
+    }
+
+    private func setRemoteDesktopGestureSupport(_ supported: Bool) {
+        guard remoteSupportsDesktopGestures != supported else { return }
+        remoteSupportsDesktopGestures = supported
+        onDesktopGestureCapabilityChanged?(supported)
     }
 
     private func stopConnectionDeadline() {

@@ -77,6 +77,71 @@ struct DockSwipeTests {
         #expect(!swipe.handle(event(axis: 1, phase: 2), remote: true).consume)
     }
 
+    @Test func nativeFramesKeepTheirOwnerAcrossTheEntireSwipe() throws {
+        var swipe = DockSwipe()
+        let began = event(axis: 2, phase: 1)
+        let changed = event(axis: 2, phase: 2, progress: 0.42)
+        let ended = event(axis: 2, phase: 4, progress: 0.9)
+        let first = swipe.handle(began, remote: true, native: true)
+        #expect(first.consume && first.frame?.phase == .began)
+        #expect(swipe.handle(changed, remote: true, native: true).frame?.offset == Double(Float(0.42)))
+        #expect(swipe.cancelNativeGesture()?.phase == .cancelled)
+        swipe.release()
+        let trailing = swipe.handle(ended, remote: false, native: true)
+        #expect(trailing.consume && trailing.arrow == nil && trailing.frame == nil)
+
+        #expect(!swipe.handle(began, remote: false, native: true).consume)
+        #expect(!swipe.handle(ended, remote: true, native: true).consume)
+    }
+
+    @Test func queuePreservesNativeGestureTransitionsAndMostRecentAbsoluteOffset() throws {
+        var queue = OutboundMessageQueue(capacity: 8)
+        for (phase, offset) in [(1, 0.0), (2, 0.1), (2, 0.6), (4, 1.0)] {
+            let frame = try #require(DesktopGestureFrame(capturing: event(axis: 1, phase: Int64(phase), progress: offset)))
+            queue.enqueue(WireMessage(type: .desktopGesture, desktopGesture: frame))
+        }
+        #expect(queue.messages.compactMap { $0.desktopGesture?.phase } == [.began, .changed, .ended])
+        #expect(queue.messages[1].desktopGesture?.offset == Double(Float(0.6)))
+    }
+
+    @Test func legacyShortcutPostsArrowFlagsAndRefreshesPointerInPlace() {
+        for arrow: CGKeyCode in [123, 124, 125, 126] {
+            var events: [CGEvent] = []
+            let receiver = InputInjector(eventPoster: { events.append($0) }, primaryBounds: {
+                CGRect(x: 0, y: 0, width: 100, height: 100)
+            })
+            receiver.activate(edge: .right)
+            let entry = events[0].location
+            events.removeAll()
+            let controller = InputController()
+            controller.onSend = receiver.handle
+            controller.sendDesktopShortcut(arrow)
+            #expect(events.map(\.type) == [.flagsChanged, .keyDown, .keyUp, .flagsChanged, .mouseMoved])
+            #expect(events[1].getIntegerValueField(.keyboardEventKeycode) == Int64(arrow))
+            #expect(events[1].flags.contains([.maskControl, .maskNumericPad, .maskSecondaryFn]))
+            #expect(events[2].flags == events[1].flags)
+            #expect(!events[0].flags.contains(.maskNumericPad))
+            #expect(!events[3].flags.contains(.maskControl))
+            #expect(events[4].location == entry)
+        }
+    }
+
+    @Test func handoffToleratesSmallReversalsAndStillReturnsAtEitherEdge() {
+        for edge: TransferEdge in [.right, .left] {
+            let receiver = InputInjector(eventPoster: { _ in }, primaryBounds: {
+                CGRect(x: 0, y: 0, width: 300, height: 160)
+            })
+            var releases = 0
+            receiver.onReleaseRequested = { releases += 1 }
+            InputController.activationMessages(edge: edge).forEach(receiver.handle)
+            let sign = edge == .right ? -1.0 : 1.0
+            receiver.handle(WireMessage(type: .mouseMove, deltaX: 4 * sign, deltaY: 0))
+            #expect(releases == 0)
+            receiver.handle(WireMessage(type: .mouseMove, deltaX: 30 * sign, deltaY: 0))
+            #expect(releases == 1)
+        }
+    }
+
     private func completedArrow(axis: Int64, progress: Double, velocity: Double) -> CGKeyCode? {
         var swipe = DockSwipe()
         _ = swipe.handle(event(axis: axis, phase: 1), remote: true)
