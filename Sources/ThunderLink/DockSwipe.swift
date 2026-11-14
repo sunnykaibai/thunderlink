@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import CoreGraphics
 
 /// Ownership is decided by the pointer when a swipe begins. Consume trailing
@@ -69,7 +70,9 @@ struct DockSwipe {
         let direction = meaningfulVelocity ? velocity : progress
         switch frame.axis {
         case .horizontal: return direction > 0 ? 124 : 123
-        case .vertical: return direction > 0 ? 126 : 125
+        case .vertical:
+            // An upward finger swipe produced negative Dock motion on the controller.
+            return CGKeyCode(direction < 0 ? kVK_UpArrow : kVK_DownArrow)
         case .pinch: return nil
         }
     }

@@ -1,3 +1,4 @@
+import Carbon.HIToolbox
 import CoreGraphics
 import Testing
 @testable import ThunderLink
@@ -17,11 +18,16 @@ struct DockSwipeTests {
         #expect(repeatedEnd.arrow == nil)
     }
 
-    @Test func horizontalAndVerticalSignsMapToSystemArrowKeys() {
+    @Test func horizontalSignsMapToSystemArrowKeys() {
         #expect(completedArrow(axis: 1, progress: -0.9, velocity: -0.2) == 123)
         #expect(completedArrow(axis: 1, progress: 0.9, velocity: 0.2) == 124)
-        #expect(completedArrow(axis: 2, progress: 0.9, velocity: 0.2) == 126)
-        #expect(completedArrow(axis: 2, progress: -0.9, velocity: -0.2) == 125)
+    }
+
+    @Test func legacyUpwardSwipeOpensMissionControlAndDownwardSwipeShowsApplicationWindows() {
+        for velocity in [0.0, 0.2] {
+            #expect(completedArrow(axis: 2, progress: -0.9, velocity: -velocity) == CGKeyCode(kVK_UpArrow))
+            #expect(completedArrow(axis: 2, progress: 0.9, velocity: velocity) == CGKeyCode(kVK_DownArrow))
+        }
     }
 
     @Test func encodedFloatProgressIsUsedWhenDirectFieldIsAbsent() {
