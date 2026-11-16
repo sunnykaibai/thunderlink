@@ -6,6 +6,9 @@ final class ControllerClient {
     var onReady: (() -> Void)?
     var onAppGestureCapabilityChanged: ((Bool) -> Void)?
     var onDesktopGestureCapabilityChanged: ((Bool) -> Void)?
+    var onClipboardSession: ((UUID?) -> Void)?
+    var onClipboardReceived: ((UUID, ClipboardPayload) -> Void)?
+    var onClipboardAcknowledged: ((UUID, ClipboardRevision) -> Void)?
     var onRelease: (() -> Void)?
     var onDisconnected: (() -> Void)?
     var onAuthenticationRejected: (() -> Void)?
@@ -21,6 +24,9 @@ final class ControllerClient {
     private var remoteReleaseReceived = false
     private var remoteSupportsAppGestures = false
     private var remoteSupportsDesktopGestures = false
+    private var remoteSupportsClipboard = false
+    private var clipboardSession: UUID?
+    private var clipboardAssembler = ClipboardAssembler()
     private let connectionTimeout: TimeInterval
 
     init(connectionTimeout: TimeInterval = 12) {
@@ -97,6 +103,25 @@ final class ControllerClient {
         queue.async { [weak self] in self?.resetConnection(notify: true) }
     }
 
+    func sendClipboard(_ payload: ClipboardPayload, session: UUID) {
+        queue.async { [weak self] in
+            guard let self, self.authenticated, self.remoteSupportsClipboard,
+                  self.clipboardSession == session, let framed = self.framed else { return }
+            framed.sendClipboard(payload)
+        }
+    }
+
+    func acknowledgeClipboard(_ revision: ClipboardRevision, session: UUID) {
+        queue.async { [weak self] in
+            guard let self, self.authenticated, self.remoteSupportsClipboard,
+                  self.clipboardSession == session else { return }
+            self.framed?.send(WireMessage(
+                type: .clipboardAck,
+                clipboardRevision: revision
+            ))
+        }
+    }
+
     private func resetConnection(notify: Bool) {
         let previous = framed
         let hadConnection = previous != nil || authenticated
@@ -106,6 +131,7 @@ final class ControllerClient {
         remoteReleaseReceived = false
         setRemoteAppGestureSupport(false)
         setRemoteDesktopGestureSupport(false)
+        setClipboardSupport(false)
         pendingMessages.reset()
         stopConnectionDeadline()
         stopHeartbeat()
@@ -152,8 +178,11 @@ final class ControllerClient {
             setRemoteDesktopGestureSupport(
                 message.capabilities?.contains("desktop-gesture-v1") == true
             )
+            setClipboardSupport(
+                message.capabilities?.contains(ClipboardPayload.capability) == true
+            )
             ThunderLinkLog.network.info(
-                "peer capabilities: heartbeat=\(message.capabilities?.contains("heartbeat-v1") == true, privacy: .public), appGesture=\(self.remoteSupportsAppGestures, privacy: .public), desktopGesture=\(self.remoteSupportsDesktopGestures, privacy: .public)"
+                "peer capabilities: heartbeat=\(message.capabilities?.contains("heartbeat-v1") == true, privacy: .public), appGesture=\(self.remoteSupportsAppGestures, privacy: .public), desktopGesture=\(self.remoteSupportsDesktopGestures, privacy: .public), clipboard=\(self.remoteSupportsClipboard, privacy: .public)"
             )
             onStatus?("已配对；把指针移到所选屏幕边缘即可控制对端")
             onReady?()
@@ -164,6 +193,14 @@ final class ControllerClient {
             remoteReleaseReceived = true
             ThunderLinkLog.input.notice("Receiver requested pointer return")
             onRelease?()
+        case .clipboardChunk:
+            guard authenticated, remoteSupportsClipboard, let session = clipboardSession,
+                  let payload = clipboardAssembler.receive(message) else { return }
+            onClipboardReceived?(session, payload)
+        case .clipboardAck:
+            guard authenticated, remoteSupportsClipboard, let session = clipboardSession,
+                  let revision = message.clipboardRevision else { return }
+            onClipboardAcknowledged?(session, revision)
         case .error:
             if awaitingHelloAck && !authenticated { onAuthenticationRejected?() }
             finish(framed, status: "对端拒绝连接：\(message.message ?? "未知原因")")
@@ -180,6 +217,7 @@ final class ControllerClient {
         remoteReleaseReceived = false
         setRemoteAppGestureSupport(false)
         setRemoteDesktopGestureSupport(false)
+        setClipboardSupport(false)
         pendingMessages.reset()
         stopConnectionDeadline()
         stopHeartbeat()
@@ -225,6 +263,15 @@ final class ControllerClient {
         guard remoteSupportsDesktopGestures != supported else { return }
         remoteSupportsDesktopGestures = supported
         onDesktopGestureCapabilityChanged?(supported)
+    }
+
+    private func setClipboardSupport(_ supported: Bool) {
+        remoteSupportsClipboard = supported
+        clipboardAssembler = ClipboardAssembler()
+        let session = supported ? UUID() : nil
+        guard clipboardSession != session else { return }
+        clipboardSession = session
+        onClipboardSession?(session)
     }
 
     private func stopConnectionDeadline() {

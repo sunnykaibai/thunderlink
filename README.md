@@ -1,8 +1,8 @@
 # ThunderLink
 
-ThunderLink 0.3.10 是一个只通过 macOS `Thunderbolt Bridge` 共享键盘和鼠标的 App。同一个 App 安装在两台 Mac 上，一台选择“控制另一台 Mac”，另一台选择“允许这台 Mac 被控制”。
+ThunderLink 0.3.11 通过 macOS `Thunderbolt Bridge` 共享键盘、鼠标和剪贴板。同一个 App 安装在两台 Mac 上，一台选择“控制另一台 Mac”，另一台选择“允许这台 Mac 被控制”。
 
-Keyboard and mouse sharing between two Macs over Thunderbolt Bridge.
+Keyboard, mouse and clipboard sharing between two Macs over Thunderbolt Bridge.
 
 [下载 v0.3.3（Apple Silicon）](https://github.com/sunnykaibai/thunderlink/releases/tag/v0.3.3) · [MIT 许可证](LICENSE) · [验证记录](docs/VALIDATION.md)
 
@@ -11,6 +11,7 @@ Keyboard and mouse sharing between two Macs over Thunderbolt Bridge.
 - Bonjour 自动发现，但只显示通过 `bridge0` 发现的对端。
 - 连接时强制使用发现结果中的 `bridge0` 接口；接收端再次检查实际连接路径。
 - 6 位配对码。
+- 两端均运行 0.3.11 或更新版本时，配对后自动同步新复制的纯文本和图片，每次最多 32 MiB。在一台 Mac 按 Control + Shift + Command + 4 选区截图，在另一台支持图片的应用按 Command + V 即可粘贴。同步与鼠标位置无关。
 - 松开键盘和鼠标按钮后，指针从主控端桌面的左边或右边移出，切换到被控端。本机相邻显示器的共享边缘不会触发切换。
 - 键盘按下/松开、修饰键、鼠标移动、点击、双击、远端拖动和滚轮转发。按住鼠标拖动时不会跨到另一台 Mac。
 - 两台 Mac 都运行 0.3.8 或更新版本，且系统版本在 macOS 13 至 26 之间时，主控把三指或四指滑动的方向、进度、速度和松手状态发送到对端，由对端系统处理调度中心与桌面切换。系统识别出的桌面捏合手势也使用这条路径。该功能依赖 macOS 未公开的 Dock 手势字段。
@@ -79,7 +80,7 @@ swiftc -O Sources/ThunderLink/AppTrackpadGesture.swift Sources/ThunderLink/WireM
 
 ## 使用边界
 
-ThunderLink 不调用 Apple Universal Control 的私有协议，不传输剪贴板、文件拖放、任意原始触点、Touch ID 或所有厂商的媒体键扩展。被控端光标目前仍限制在主显示器。两台真实 Mac 上的休眠、锁屏、多显示器和高频游戏鼠标行为尚未完整验证。
+ThunderLink 不调用 Apple Universal Control 的私有协议，尚未支持文件拖放、任意原始触点、Touch ID 和部分厂商的媒体键扩展。被控端光标目前仍限制在主显示器。两台真实 Mac 上的休眠、锁屏、多显示器和高频游戏鼠标行为尚未完整验证。
 
 传输内容是经过配对码验证的本地 TCP 消息，但尚未加密。监听端拒绝不经过 `bridge0` 的连接，适用于两台直接用雷电线连接的 Mac，不应部署到不受信任的共享网络。
 

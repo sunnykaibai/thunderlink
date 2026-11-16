@@ -58,6 +58,23 @@ final class AppModel: ObservableObject {
             : "首次连接成功后会自动记住对端和配对信息。"
     }
 
+    @Published private(set) var clipboardSession: UUID?
+    @Published private(set) var pasteTimedOut = false
+    private let clipboard = ClipboardSync()
+    private let remotePaste = RemotePaste()
+
+    var clipboardStatus: String? {
+        if pasteTimedOut { return "剪贴板传输未及时完成，请再粘贴一次。" }
+        if clipboardSession != nil {
+            if #available(macOS 15.4, *), NSPasteboard.general.accessBehavior == .alwaysDeny {
+                return "请在系统设置中允许 ThunderLink 读取剪贴板，以同步本机复制的内容。"
+            }
+            return "剪贴板已连接，可双向复制文本和图片。"
+        }
+        let connected = role == .controller ? controllerConnected : remoteControllerName != nil
+        return connected ? "同步剪贴板需要在另一台 Mac 上安装 ThunderLink 0.3.11 或更新版本。" : nil
+    }
+
     private let browser = PeerBrowser()
     private let receiver = ReceiverService()
     private let controller = ControllerClient()
@@ -113,6 +130,7 @@ final class AppModel: ObservableObject {
             // NotificationCenter delivers this observer synchronously on the main
             // queue. Cleanup must finish before termination, not in a later Task.
             MainActor.assumeIsolated {
+                self?.endClipboardSession()
                 self?.inputController.stopMonitoring(force: true)
                 self?.injector.releaseAll()
                 self?.controller.disconnect()
@@ -156,6 +174,7 @@ final class AppModel: ObservableObject {
     }
 
     func stopReceiver() {
+        if role == .receiver { endClipboardSession() }
         setReceiverAutoStart(false)
         receiver.stop()
         injector.releaseAll()
@@ -200,6 +219,7 @@ final class AppModel: ObservableObject {
     }
 
     func disconnectController() {
+        if role == .controller { endClipboardSession() }
         wantsControllerConnection = false
         controllerAutoConnectEnabled = false
         UserDefaults.standard.set(false, forKey: DefaultsKey.controllerAutoConnect)
@@ -265,6 +285,7 @@ final class AppModel: ObservableObject {
 
     private func roleChanged() {
         guard initialized else { return }
+        endClipboardSession()
         if role == .controller {
             receiver.stop()
             injector.releaseAll()
@@ -350,7 +371,55 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private func endClipboardSession() {
+        remotePaste.resetSession()
+        clipboardSession = nil
+        pasteTimedOut = false
+        clipboard.stop()
+    }
+
+    private func setClipboardSession(_ session: UUID?, for serviceRole: AppRole) {
+        guard role == serviceRole else { return }
+        endClipboardSession()
+        guard let session,
+              serviceRole == .controller ? wantsControllerConnection : receiverAutoStartEnabled else { return }
+        clipboardSession = session
+        clipboard.start { [weak self] payload in
+            guard let self, self.clipboardSession == session else { return }
+            if serviceRole == .controller { self.controller.sendClipboard(payload, session: session) }
+            else { self.receiver.sendClipboard(payload, session: session) }
+        }
+        clipboard.onRemoteResolved = { [weak self] revision in
+            guard let self, self.clipboardSession == session else { return }
+            if serviceRole == .controller { self.controller.acknowledgeClipboard(revision, session: session) }
+            else { self.receiver.acknowledgeClipboard(revision, session: session) }
+        }
+    }
+
     private func bindServices() {
+        controller.onClipboardSession = { [weak self] session in
+            DispatchQueue.main.async { self?.setClipboardSession(session, for: .controller) }
+        }
+        receiver.onClipboardSession = { [weak self] session in
+            DispatchQueue.main.async { self?.setClipboardSession(session, for: .receiver) }
+        }
+        let receiveClipboard: (UUID, ClipboardPayload) -> Void = { [weak self] session, payload in
+            DispatchQueue.main.async {
+                guard let self, self.clipboardSession == session else { return }
+                self.clipboard.receive(payload)
+            }
+        }
+        controller.onClipboardReceived = receiveClipboard
+        receiver.onClipboardReceived = receiveClipboard
+        controller.onClipboardAcknowledged = { [weak self] session, revision in
+            DispatchQueue.main.async {
+                guard let self, self.clipboardSession == session else { return }
+                self.pasteTimedOut = false
+                self.remotePaste.acknowledge(revision)
+            }
+        }
+        remotePaste.onTimeout = { [weak self] in self?.pasteTimedOut = true }
+        remotePaste.send = { [weak self] message in self?.controller.send(message) }
         let receiver = self.receiver
         inputDelivery = InputMessageDelivery(onMessage: { [weak self] message in
             guard let self else { return }
@@ -444,7 +513,10 @@ final class AppModel: ObservableObject {
             }
         }
         controller.onRelease = { [weak self] in
-            DispatchQueue.main.async { self?.inputController.releaseFromRemote() }
+            DispatchQueue.main.async {
+                self?.remotePaste.cancelPending()
+                self?.inputController.releaseFromRemote()
+            }
         }
         controller.onAuthenticationRejected = { [weak self] in
             DispatchQueue.main.async {
@@ -467,7 +539,18 @@ final class AppModel: ObservableObject {
                 self.browser.start()
             }
         }
-        inputController.onSend = { [weak self] message in self?.controller.send(message) }
+        inputController.onSend = { [weak self] message in
+            guard let self else { return }
+            guard let session = self.clipboardSession else { self.controller.send(message); return }
+            self.remotePaste.forward(message) { ready in
+                // Pasteboard providers can block. Leave the HID event tap callback
+                // before asking the pasteboard for data.
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.clipboardSession == session else { return }
+                    self.clipboard.prepareForPaste(ready)
+                }
+            }
+        }
         inputController.onError = { [weak self] error in
             DispatchQueue.main.async { self?.connectionStatus = error }
         }

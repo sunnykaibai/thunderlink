@@ -10,6 +10,8 @@ final class FramedConnection: ConnectionTransport {
     private var receiveBuffer = Data()
     private let outbound = BoundedMessageMailbox()
     private var isSending = false
+    private var clipboardSendState: ClipboardSendState?
+    private var lastSentWasClipboard = false
     private var transportErrorReported = false
     private let lifecycleLock = NSLock()
     private var acceptingSends = true
@@ -40,6 +42,18 @@ final class FramedConnection: ConnectionTransport {
         handleOfferResult(result)
     }
 
+    func sendClipboard(_ payload: ClipboardPayload) {
+        guard payload.data.count <= ClipboardPayload.maxBytes else { return }
+        let accepted = lifecycleLock.withLock { () -> Bool in
+            guard acceptingSends else { return false }
+            if let current = clipboardSendState,
+               current.payload.revision >= payload.revision { return false }
+            clipboardSendState = ClipboardSendState(payload: payload)
+            return true
+        }
+        if accepted { queue.async { [weak self] in self?.sendNextIfNeeded() } }
+    }
+
     func sendThenClose(
         _ message: WireMessage,
         deadline: TimeInterval = 1,
@@ -49,6 +63,7 @@ final class FramedConnection: ConnectionTransport {
             guard acceptingSends else { return nil }
             acceptingSends = false
             gracefulCloseRequested = true
+            clipboardSendState = nil
             return outbound.offer(message)
         }
         guard let result else {
@@ -131,7 +146,18 @@ final class FramedConnection: ConnectionTransport {
 
     private func sendNextIfNeeded() {
         guard !isSending else { return }
-        guard let message = outbound.nextOrBecomeIdle() else {
+        let message: WireMessage?
+        if lastSentWasClipboard, let ordinary = outbound.nextOrBecomeIdle() {
+            lastSentWasClipboard = false
+            message = ordinary
+        } else if let clipboard = nextClipboardMessage() {
+            lastSentWasClipboard = true
+            message = clipboard
+        } else {
+            lastSentWasClipboard = false
+            message = outbound.nextOrBecomeIdle()
+        }
+        guard let message else {
             if closeAfterDrain { finishGracefulClose() }
             return
         }
@@ -163,6 +189,15 @@ final class FramedConnection: ConnectionTransport {
             })
     }
 
+    private func nextClipboardMessage() -> WireMessage? {
+        lifecycleLock.withLock {
+            guard var state = clipboardSendState else { return nil }
+            let message = state.nextMessage()
+            clipboardSendState = state.hasRemainingChunks ? state : nil
+            return message
+        }
+    }
+
     private func reportTransportError(_ error: Error) {
         guard !transportErrorReported else { return }
         transportErrorReported = true
@@ -170,7 +205,9 @@ final class FramedConnection: ConnectionTransport {
             acceptingSends = false
             gracefulCloseRequested = false
             terminated = true
+            clipboardSendState = nil
         }
+        lastSentWasClipboard = false
         outbound.clear()
         ThunderLinkLog.network.error("transport failed: \(error.localizedDescription, privacy: .public)")
         onTransportError?(error)
@@ -211,6 +248,7 @@ final class FramedConnection: ConnectionTransport {
             acceptingSends = false
             gracefulCloseRequested = false
             terminated = true
+            clipboardSendState = nil
         }
         closeTimer?.setEventHandler {}
         closeTimer?.cancel()
@@ -219,6 +257,7 @@ final class FramedConnection: ConnectionTransport {
         let completion = closeCompletion
         closeCompletion = nil
         outbound.clear()
+        lastSentWasClipboard = false
         receiveBuffer.removeAll(keepingCapacity: false)
         connection.stateUpdateHandler = nil
         onMessage = nil

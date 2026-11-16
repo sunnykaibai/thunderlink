@@ -30,7 +30,7 @@ struct ContentView: View {
                 .foregroundStyle(model.networkState.isActive ? .green : .secondary)
             VStack(alignment: .leading, spacing: 3) {
                 Text("ThunderLink").font(.title2.bold())
-                Text("只通过雷电桥共享键盘和鼠标")
+                Text("通过雷电桥共享键盘、鼠标和剪贴板")
                     .foregroundStyle(.secondary)
             }
             Spacer()
@@ -106,6 +106,11 @@ struct ContentView: View {
             Text(model.connectionStatus)
                 .font(.callout)
                 .textSelection(.enabled)
+            if let status = model.clipboardStatus {
+                Label(status, systemImage: "clipboard")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 

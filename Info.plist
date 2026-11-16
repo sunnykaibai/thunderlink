@@ -19,15 +19,15 @@
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>0.3.10</string>
+    <string>0.3.11</string>
     <key>CFBundleVersion</key>
-    <string>16</string>
+    <string>17</string>
     <key>LSMinimumSystemVersion</key>
     <string>13.0</string>
     <key>NSHumanReadableCopyright</key>
     <string>Built for local Thunderbolt input sharing.</string>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>ThunderLink 使用雷电桥发现另一台 Mac 并传输键盘和鼠标事件。</string>
+    <string>ThunderLink 使用雷电桥发现另一台 Mac 并传输键鼠事件和剪贴板内容。</string>
     <key>NSBonjourServices</key>
     <array>
         <string>_thunderlink._tcp</string>

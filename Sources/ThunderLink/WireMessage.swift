@@ -24,6 +24,8 @@ enum WireMessageType: String, Codable {
     case scroll
     case appGesture
     case desktopGesture
+    case clipboardChunk
+    case clipboardAck
     case release
     case ping
     case pong
@@ -52,6 +54,8 @@ struct WireMessage: Codable, Equatable {
     var scrollContinuous: Bool? = nil
     var appGesture: AppTrackpadGesture? = nil
     var desktopGesture: DesktopGestureFrame? = nil
+    var clipboardChunk: ClipboardChunk? = nil
+    var clipboardRevision: ClipboardRevision? = nil
     var message: String? = nil
     var capabilities: [String]? = nil
 
@@ -62,7 +66,7 @@ struct WireMessage: Codable, Equatable {
             computerName: name,
             pairingCode: code,
             edge: edge,
-            capabilities: ["heartbeat-v1"]
+            capabilities: ["heartbeat-v1", ClipboardPayload.capability]
         )
     }
 }
@@ -71,7 +75,11 @@ enum WireCodec {
     static let maxFrameBytes = 16 * 1_024
 
     static func encode(_ message: WireMessage) throws -> Data {
-        var data = try JSONEncoder().encode(message)
+        let encoder = JSONEncoder()
+        // Clipboard chunks are base64 encoded and may contain many slash
+        // characters. Escaping them can nearly double a frame's JSON size.
+        encoder.outputFormatting = .withoutEscapingSlashes
+        var data = try encoder.encode(message)
         guard data.count <= maxFrameBytes else {
             throw WireCodecError.frameTooLarge(data.count)
         }

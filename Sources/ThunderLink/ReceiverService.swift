@@ -10,6 +10,9 @@ final class ReceiverService {
     var onDisconnected: (() -> Void)?
     var onListening: ((NWEndpoint.Port) -> Void)?
     var onRunningChanged: ((Bool) -> Void)?
+    var onClipboardSession: ((UUID?) -> Void)?
+    var onClipboardReceived: ((UUID, ClipboardPayload) -> Void)?
+    var onClipboardAcknowledged: ((UUID, ClipboardRevision) -> Void)?
 
     private let queue = DispatchQueue(label: "com.sunny.thunderlink.receiver")
     private let queueKey = DispatchSpecificKey<UInt8>()
@@ -23,6 +26,9 @@ final class ReceiverService {
     private var expectedCode = ""
     private var authenticated = false
     private var rejectingClient = false
+    private var remoteSupportsClipboard = false
+    private var clipboardSession: UUID?
+    private var clipboardAssembler = ClipboardAssembler()
 
     init(
         port: NWEndpoint.Port = ReceiverService.port,
@@ -106,6 +112,25 @@ final class ReceiverService {
         }
     }
 
+    func sendClipboard(_ payload: ClipboardPayload, session: UUID) {
+        queue.async { [weak self] in
+            guard let self, self.authenticated, self.remoteSupportsClipboard,
+                  self.clipboardSession == session else { return }
+            self.client?.sendClipboard(payload)
+        }
+    }
+
+    func acknowledgeClipboard(_ revision: ClipboardRevision, session: UUID) {
+        queue.async { [weak self] in
+            guard let self, self.authenticated, self.remoteSupportsClipboard,
+                  self.clipboardSession == session else { return }
+            self.client?.send(WireMessage(
+                type: .clipboardAck,
+                clipboardRevision: revision
+            ))
+        }
+    }
+
     private func accept(_ connection: NWConnection) {
         guard client == nil else {
             connection.cancel()
@@ -115,6 +140,7 @@ final class ReceiverService {
         client = framed
         authenticated = false
         rejectingClient = false
+        setClipboardSupport(false)
         startHandshakeTimer(for: framed)
         framed.onState = { [weak self, weak framed] state in
             guard let self, let framed, self.client === framed else { return }
@@ -171,7 +197,7 @@ final class ReceiverService {
             cancelHandshakeTimer()
             onControllerChanged?(name)
             let desktopGesturesSupported = DesktopGestureFrame.isSupportedOnThisOS
-            var capabilities = ["heartbeat-v1", "app-gesture-v1"]
+            var capabilities = ["heartbeat-v1", "app-gesture-v1", ClipboardPayload.capability]
             if desktopGesturesSupported { capabilities.append("desktop-gesture-v1") }
             framed.send(WireMessage(
                 type: .helloAck,
@@ -179,14 +205,29 @@ final class ReceiverService {
                 edge: edge,
                 capabilities: capabilities
             ))
+            setClipboardSupport(
+                message.capabilities?.contains(ClipboardPayload.capability) == true
+            )
             ThunderLinkLog.network.info(
-                "controller capabilities: heartbeat=\(message.capabilities?.contains("heartbeat-v1") == true, privacy: .public), receiver desktopGesture=\(desktopGesturesSupported, privacy: .public)"
+                "controller capabilities: heartbeat=\(message.capabilities?.contains("heartbeat-v1") == true, privacy: .public), clipboard=\(self.remoteSupportsClipboard, privacy: .public), receiver desktopGesture=\(desktopGesturesSupported, privacy: .public)"
             )
             onStatus?("已与 \(name) 通过 bridge0 配对")
             return
         }
         if message.type == .ping {
             framed.send(WireMessage(type: .pong))
+            return
+        }
+        if message.type == .clipboardChunk {
+            guard remoteSupportsClipboard, let session = clipboardSession,
+                  let payload = clipboardAssembler.receive(message) else { return }
+            onClipboardReceived?(session, payload)
+            return
+        }
+        if message.type == .clipboardAck {
+            guard remoteSupportsClipboard, let session = clipboardSession,
+                  let revision = message.clipboardRevision else { return }
+            onClipboardAcknowledged?(session, revision)
             return
         }
         if message.type == .desktopGesture,
@@ -223,6 +264,7 @@ final class ReceiverService {
         client = nil
         authenticated = false
         rejectingClient = false
+        setClipboardSupport(false)
         source.cancel()
         ThunderLinkLog.network.error("receiver disconnected: \(status, privacy: .public)")
         onControllerChanged?(nil)
@@ -249,6 +291,7 @@ final class ReceiverService {
         client = nil
         authenticated = false
         rejectingClient = false
+        setClipboardSupport(false)
         previous?.cancel()
         listener?.cancel()
         listener = nil
@@ -263,5 +306,14 @@ final class ReceiverService {
         } else {
             queue.sync(execute: work)
         }
+    }
+
+    private func setClipboardSupport(_ supported: Bool) {
+        remoteSupportsClipboard = supported
+        clipboardAssembler = ClipboardAssembler()
+        let session = supported ? UUID() : nil
+        guard clipboardSession != session else { return }
+        clipboardSession = session
+        onClipboardSession?(session)
     }
 }
