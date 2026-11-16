@@ -4,7 +4,7 @@ ThunderLink 0.3.11 通过 macOS `Thunderbolt Bridge` 共享键盘、鼠标和剪
 
 Keyboard, mouse and clipboard sharing between two Macs over Thunderbolt Bridge.
 
-[下载 v0.3.3（Apple Silicon）](https://github.com/sunnykaibai/thunderlink/releases/tag/v0.3.3) · [MIT 许可证](LICENSE) · [验证记录](docs/VALIDATION.md)
+[下载最新版（Apple Silicon）](https://github.com/sunnykaibai/thunderlink/releases/latest/download/ThunderLink-arm64.zip) · [版本记录](https://github.com/sunnykaibai/thunderlink/releases) · [MIT 许可证](LICENSE) · [验证记录](docs/VALIDATION.md)
 
 ## 已实现
 
@@ -57,9 +57,11 @@ zsh scripts/build-app.sh release
 
 构建脚本限制为 2 个编译任务，按当前 Mac 的架构生成安装包。本次安装包为 Apple Silicon（arm64），Intel Mac 需要在对应架构下构建。构建和测试不会启动 App 或注入真实键鼠事件。
 
+发布新版时，先把通过测试的源码推送到 `main`，为对应提交打上 `v版本号` 标签，然后在 GitHub Releases 发布同一版本的签名安装包和 SHA-256 校验文件。每个版本的 Apple Silicon 安装包都使用 `ThunderLink-arm64.zip` 这个附件名，这样另一台 Mac 始终可以从首页的同一链接下载最新版。
+
 ## 两台 Mac 的使用顺序
 
-1. 把 `ThunderLink.zip` 复制到两台 Mac，解压后把 `ThunderLink.app` 放入 `/Applications`。这个版本使用本地签名。
+1. 在两台 Mac 上分别从本页顶部下载最新版，解压后把 `ThunderLink.app` 放入“应用程序”。更新已有安装时，先退出 ThunderLink，替换旧 App，再重新打开。
 2. 在被控端选择“允许这台 Mac 被控制”，授予辅助功能权限，重新打开 App，然后点击“开始接收”。
 3. 在主控端选择“控制另一台 Mac”，在 macOS 首次提示时授予辅助功能和输入监控权限。
 4. 选择自动发现的对端，输入被控端显示的 6 位配对码，选择对端位于左边还是右边，然后点击“连接”。
